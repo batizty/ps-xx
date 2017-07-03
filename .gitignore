@@ -20,3 +20,18 @@
 
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
+pom.xml
+*.iml
+*.vscode
+
+# sbt project
+project
+
+# target
+target
+
+# idea
+.idea
+
+# DS_Store
+.DS_Store
