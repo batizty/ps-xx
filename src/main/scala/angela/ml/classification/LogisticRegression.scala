@@ -21,6 +21,15 @@ import angela.exception._
 /**
   * Logistic regression. Supports multinomial logistic (softmax) regression and binomial logistic
   * regression.
+  *
+  * TODO
+  *   1 搞定L1正则
+  *   2 拆开cost函数
+  *   3 实现ssp asp
+  *   4 拆开实现逻辑
+  *   5 链接上ps接口
+  *   6 加上min max threshold
+  *   7 测试
   */
 private[classification] trait LogisticRegressionParams
   extends HasRegParam
@@ -34,7 +43,9 @@ private[classification] trait LogisticRegressionParams
     with NumOfFeatures
     with IsAsynchronousAlgorithm
     with BatchSize
-    with TrainDataSetSplitRatio {
+    with TrainDataSetSplitRatio
+    with LearningRate
+    with LearningRateDecay {
 
   def setThreshold(value: Double): this.type = {
     assert(value < 1.0f && value > 0.0, "Threshold should be in (0.0, 1.0)")
@@ -47,7 +58,10 @@ class LogisticRegression(val uid: String)
   extends LogisticRegressionParams with Logging {
   val MinimumPsServerRatio: Double = 0.5f
   val AcceptablePsServerRatio: Double = 0.8f
-  val LearningRateDecay: Double = 0.5
+
+  // TODO add max threshold and min threshold
+
+  // TODO finish L1 Reg
 
   implicit def Long2Int(x: Long): Int = {
     try {
@@ -65,8 +79,10 @@ class LogisticRegression(val uid: String)
     * Set up Regular Params
     * alpha * (lamda * ||w||) + (1 - alpha) * ((lamda / 2) * (Wt * W)),
     * alpha belong to [0, 1]
-    * RegParam is the this alpha
-    * Default is 0.0.
+    * Set the ElasticNet mixing parameter.
+    * For alpha = 0, the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty.
+    * For 0 < alpha < 1, the penalty is a combination of L1 and L2.
+    * Default is 0.0 which is an L2 penalty.
     *
     * @group setParam
     */
@@ -74,14 +90,11 @@ class LogisticRegression(val uid: String)
 
   setDefault(regParam -> 0.0)
 
-
   /**
-    * Set the ElasticNet mixing parameter.
-    * For alpha = 0, the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty.
-    * For 0 < alpha < 1, the penalty is a combination of L1 and L2.
-    * Default is 0.0 which is an L2 penalty.
+    * This this the lamda in alpha * (lamda * ||w||) + (1 - alpha) * ((lamda / 2) * (Wt * W)),
     *
-    * @group setParam
+    * @param value
+    * @return
     */
   def setElasticNetParam(value: Double): this.type = set(elasticNetParam, value)
 
@@ -211,20 +224,20 @@ class LogisticRegression(val uid: String)
     val (trains: RDD[(mutable.HashMap[Long, Double], Int)], tests) = splitTrainDataSet[T](dataset)
     val pshandler = connect()
 
-    var iter: Int = 0
+    var iterationTime: Int = 0
     var lastLogLoss: Double = 0.0f
     var diffLogLoss: Double = 1.0f
 
-    while (false == isFinishTraining(iter, diffLogLoss)) {
-      iter = iter + 1
-      var totalSamples: Long = 0L
-      var totalFeatures: Long = 0L
-      var totalCost: Double = 0.0f
+    while (false == isFinishTraining(iterationTime, diffLogLoss)) {
+      iterationTime = iterationTime + 1
 
-      val records: RDD[(Long, Double, Double)] = trains.mapPartitions { iter =>
+
+      val records: RDD[(Long, Long, Double)] = trains.mapPartitions { iter =>
+        var totalCost: Double = 0.0
+        var totalSamples: Long = 0L
+        var totalFeatures: Long = 0L
 
         iter.sliding(getBatchSize).map { data0 =>
-
           val data = mutable.Buffer(data0: _*)
           val keySet: Set[Long] = data
             .flatMap(_._1.keySet)
@@ -232,36 +245,50 @@ class LogisticRegression(val uid: String)
           val keys: Array[Long] = keySet
             .toArray
             .sorted
-          data
 
-          //          pshandler.PULL(keys) { w0 =>
-          //            val weight: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
-          //
-          //            val gradient: mutable.Map[Long, Double] = mutable.Map()
-          //            var _features: Long = 0
-          //            val cost = data map { case (vectorx, y1) =>
-          //                _features = vectorx.
-          //                val y0 = sigmod(weight, vectorx)
-          //                val err = getEta(eta, iter) * (y0 - y1)
-          //
-          //                vectorx foreach { case ((j, xj)) if xj != 0.0 =>
-          //                  weight += j -> (weight.getOrElse(j, 0.0) - err * xj)
-          //                }
-          //
-          //                y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
-          //            }.sum
-          //          }
+          pshandler.PULL(keys) { w0 =>
+            val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
+            val vectorW: mutable.Map[Long, Double] = vectorW0
+
+            val (cost: Double, features: Long) = data map { case (vectorX, y1) =>
+              val y0 = sigmod(vectorW, vectorX)
+              val err = learningRate(iterationTime) * (y0 - y1)
+
+              vectorX foreach { case ((j, xj)) if xj != 0.0 =>
+                vectorW += j -> (vectorW.getOrElse(j, 0.0) - err * xj)
+              }
+              val _cost = y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
+              (_cost, vectorX.size.toLong)
+            } reduce ((a, b) => (a._1 + b._1, a._2 + b._2))
+
+            totalCost = -cost
+            totalSamples += data.size
+            totalFeatures += features
+
+            val grad = getGradient(vectorW0, vectorW, iterationTime, data.size)
+              .toArray
+              .sortBy(_._1)
+            pshandler.PUSH(grad.map(_._1), grad.map(_._2)) { result =>
+              ()
+            }
+          }
         }
-        List((0L, 0.0, 0.0)).iterator
+
+        List((totalSamples, totalFeatures, totalCost)).iterator
+      }
+      val (totalSamples: Long, totalFeatures: Long, totalCost: Double) = records.reduce {
+        case (a, b) =>
+          (a._1 + b._1, a._2 + b._2, a._3 + b._3)
       }
 
-      logInfo(s" Start Iteration $iter")
-      logInfo(s" End Iteration $iter")
+      logInfo(s" Start Iteration $iterationTime")
+      logInfo(s" End Iteration $iterationTime")
       logInfo(s" ---- Summary ----")
       logInfo(s"  Samples : $totalSamples")
       if (totalSamples > 0)
-        logInfo(s"  Average Non Zero Feature Number : ${totalFeatures / totalSamples}")
+        logInfo(s"  Average Non Zero Feature Number : ${totalFeatures.toDouble / totalSamples.toDouble}")
       logInfo(s"  Total Cost : $totalCost")
+
       val logLoss = if (totalSamples > 0)
         totalCost / totalSamples
       else
@@ -274,31 +301,49 @@ class LogisticRegression(val uid: String)
     ???
   }
 
-  def getCost(
-               data: mutable.Buffer[(mutable.Map[Long, Double], Int)],
-               weight: mutable.Map[Long, Double],
-               eta: Double,
-               iter: Int
-             ): (Double, Double, mutable.Map[Long, Double]) = {
-    data map { case (vector, y1) =>
-      val features = vector.size
-      val y0 = sigmod(weight, vector)
-      val err = getEta(eta, iter) * (y0 - y1)
-      y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
+  def getGradient(
+                   vectorWOld: mutable.Map[Long, Double],
+                   vectorW: mutable.Map[Long, Double],
+                   batchSize: Int,
+                   iteration: Int
+                 ): mutable.Map[Long, Double] = {
+    val grad: mutable.Map[Long, Double] = mutable.Map.empty
+
+    // Without L1 Reg and L2 Reg
+    (vectorW.keySet union vectorWOld.keySet) foreach { key =>
+      grad += key -> (vectorW.getOrElse(key, 0.0) - vectorWOld.getOrElse(key, 0.0)) / batchSize.toDouble
     }
 
-    (0.0, 0L, mutable.Map.empty())
+    val gradL1 = if (getRegParam > 0.0) {
+      // L1 Reg
+      L1Reg(grad)
+    } else grad
+
+    val gradL2 = if (getRegParam < 1.0) {
+      // L2 Reg
+      L2Reg(vectorW, gradL1, iteration)
+    } else gradL1
+
+    gradL2
   }
 
-  /**
-    * Compute Learing Rate
-    *
-    * @param eta
-    * @param iter
-    * @return
-    */
-  def getEta(eta: Double, iter: Int): Double = {
-    1 / math.sqrt(1.0 + LearningRateDecay * iter)
+
+  // TODO 加上正则方法
+  def L1Reg: mutable.Map[Long, Double] => mutable.Map[Long, Double] = { grad =>
+    grad
+  }
+
+  def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double], Int) => mutable.Map[Long, Double] = { (weight, grad, iteration) =>
+    if (getRegParam != 1.0) {
+      grad foreach { case (i, wi) if weight.contains(i) =>
+        grad += i -> (1.0 - getRegParam) * learningRate(iteration) * weight(i)
+      }
+    }
+    grad
+  }
+
+  def learningRate(iter: Int): Double = {
+    getLearningRate / (1.0 + getLearningRateDecay * iter)
   }
 
   protected def isFinishTraining(iter: Int, diffLogLoss: Double): Boolean = {

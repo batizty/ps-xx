@@ -380,7 +380,7 @@ private trait TrainDataSetSplitRatio extends Params {
     */
   final val splitRatio: DoubleParam = new DoubleParam(this, "splitRatio", "Split out a tiny tests set to show progress during training", ParamValidators.inRange(0.0, 1.0))
 
-  setDefault[Double](splitRatio, 0.0f)
+  setDefault[Double](splitRatio, 0.0)
 
   final def getSplitRatio: Double = $(splitRatio)
 }
@@ -391,6 +391,22 @@ private trait BatchSize extends Params {
   setDefault[Long](batchSize, 1000L)
 
   final def getBatchSize: Long = $(batchSize)
+}
+
+private trait LearningRate extends Params {
+  final val learningRate: DoubleParam = new DoubleParam(this, "learningRate", "Learning for gradient for solve LR", ParamValidators.gt(0.001))
+
+  setDefault[Double](learningRate, 1.0)
+
+  final def getLearningRate: Double = $(learningRate)
+}
+
+private trait LearningRateDecay extends Params {
+  final val learningRateDecay: DoubleParam = new DoubleParam(this, "learningRateDecay", "Decay of Learning Rate", ParamValidators.gt(0.001))
+
+  setDefault[Double](learningRateDecay, 0.5)
+
+  final def getLearningRateDecay: Double = $(learningRateDecay)
 }
 // scalastyle:on
 
