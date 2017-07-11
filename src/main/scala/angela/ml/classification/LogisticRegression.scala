@@ -15,7 +15,7 @@ import glint.Client
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext}
 import scala.collection.mutable
-import angela.utils.Logging
+import angela.utils.{FileUtils, Logging}
 import angela.exception._
 
 /**
@@ -23,13 +23,14 @@ import angela.exception._
   * regression.
   *
   * TODO
-  *   1 搞定L1正则
-  *   2 拆开cost函数
-  *   3 实现ssp asp
-  *   4 拆开实现逻辑
-  *   5 链接上ps接口
-  *   6 加上min max threshold
-  *   7 测试
+  * 1 搞定L1正则 -- TODO
+  * 2 拆开cost函数 -- DONE
+  * 3 实现ssp asp
+  * 4 拆开实现逻辑
+  * 5 链接上ps接口
+  * 6 加上min max threshold
+  * 7 加上测试auc logdiff的代码
+  * 8
   */
 private[classification] trait LogisticRegressionParams
   extends HasRegParam
@@ -45,7 +46,8 @@ private[classification] trait LogisticRegressionParams
     with BatchSize
     with TrainDataSetSplitRatio
     with LearningRate
-    with LearningRateDecay {
+    with LearningRateDecay
+    with ModelPath {
 
   def setThreshold(value: Double): this.type = {
     assert(value < 1.0f && value > 0.0, "Threshold should be in (0.0, 1.0)")
@@ -58,10 +60,6 @@ class LogisticRegression(val uid: String)
   extends LogisticRegressionParams with Logging {
   val MinimumPsServerRatio: Double = 0.5f
   val AcceptablePsServerRatio: Double = 0.8f
-
-  // TODO add max threshold and min threshold
-
-  // TODO finish L1 Reg
 
   implicit def Long2Int(x: Long): Int = {
     try {
@@ -197,20 +195,59 @@ class LogisticRegression(val uid: String)
     * Records all Parameters for this training
     */
   def logParameters(): Unit = {
+    log.info("----- Parameters -----")
+    log.info("----------------------")
   }
 
   /** Train Jobs **/
   def trainRDD(dataset: RDD[(mutable.HashMap[Long, Double], Int)]): LogisticsRegressionModel = {
-    logParameters()
-    // xx
+    logParameters() // TODO
+    type T = (mutable.HashMap[Long, Double], Int)
+
+    val (trains: RDD[T], tests) = splitTrainDataSet[T](dataset)
+    val pshandler = connect()
+
     if (IsAsynchronousAlgorithm) {
-      trainAsyncRDD(dataset)
+      trainASGDRDD(dataset, pshandler)
     } else {
-      trainSyncRDD(dataset)
+      trainSSPRDD(dataset, pshandler)
     }
+    //
+    //    var iterationTime: Int = 0
+    //    var lastLogLoss: Double = 0.0f
+    //    var diffLogLoss: Double = 1.0f
+    //
+    //    while (false == isFinishTraining(iterationTime, diffLogLoss)) {
+    //      iterationTime = iterationTime + 1
+    //
+    //        if (IsAsynchronousAlgorithm) {
+    //          // TODO refactor to inject code
+    //          trainASGDRDD(dataset, pshandler)
+    //        } else {
+    //          trainSSPRDD(dataset, pshandler)
+    //        }
+    //
+    //      logInfo(s" Start Iteration $iterationTime")
+    //      logInfo(s" End Iteration $iterationTime")
+    //      logInfo(s" ---- Summary ----")
+    //      logInfo(s"  Samples : $totalSamples")
+    //      if (totalSamples > 0)
+    //        logInfo(s"  Average Non Zero Feature Number : ${totalFeatures.toDouble / totalSamples.toDouble}")
+    //      logInfo(s"  Total Cost : $totalCost")
+    //
+    //      val logLoss = if (totalSamples > 0)
+    //        totalCost / totalSamples
+    //      else
+    //        throw new Exception("Samples Set is Empty")
+    //      diffLogLoss = (logLoss - lastLogLoss)
+    //      lastLogLoss = logLoss
 
+    // TODO 加上测试的代码
+
+    //    }
+
+    // TODO add LogisticRegression Model
     ???
-
   }
 
   private def splitTrainDataSet[T](dataset: RDD[T]): (RDD[T], RDD[T]) = {
@@ -219,74 +256,132 @@ class LogisticRegression(val uid: String)
     (trains, tests)
   }
 
-  protected def trainAsyncRDD(dataset: RDD[(mutable.HashMap[Long, Double], Int)]): LogisticsRegressionModel = {
-    type T = (mutable.HashMap[Long, Double], Int)
-    val (trains: RDD[(mutable.HashMap[Long, Double], Int)], tests) = splitTrainDataSet[T](dataset)
-    val pshandler = connect()
+  protected def trainSSPRDD(
+                             trains: RDD[(mutable.HashMap[Long, Double], Int)],
+                             pshandler: PSClientHandler[Double]
+                           ): LogisticsRegressionModel = {
 
     var iterationTime: Int = 0
     var lastLogLoss: Double = 0.0f
     var diffLogLoss: Double = 1.0f
 
-    while (false == isFinishTraining(iterationTime, diffLogLoss)) {
-      iterationTime = iterationTime + 1
+    val (totalSamples: Long, totalFeatures: Long, totalCost: Double) = trains
+      .mapPartitions { dataPartition =>
+        val rddTotalSamples = dataPartition.size toLong
 
+        val data = mutable.Buffer(dataPartition.toArray: _*)
+        val keySet: Set[Long] = data
+          .flatMap(_._1.keySet)
+          .toSet
+        val keys: Array[Long] = keySet
+          .toArray
+          .sorted
 
-      val records: RDD[(Long, Long, Double)] = trains.mapPartitions { iter =>
-        var totalCost: Double = 0.0
-        var totalSamples: Long = 0L
-        var totalFeatures: Long = 0L
+        val rddTotalFeatures: Long = keys.size
+        var rddTotalCost: Double = 0.0
 
-        iter.sliding(getBatchSize).map { data0 =>
-          val data = mutable.Buffer(data0: _*)
-          val keySet: Set[Long] = data
-            .flatMap(_._1.keySet)
-            .toSet
-          val keys: Array[Long] = keySet
-            .toArray
-            .sorted
-
+        while (isFinishTraining(iterationTime, diffLogLoss)) {
+          iterationTime = iterationTime + 1
+          // 可能需要多次拉取
           pshandler.PULL(keys) { w0 =>
             val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
-            val vectorW: mutable.Map[Long, Double] = vectorW0
+            val (cost: Double, features: Long, vectorW) = costFunc(data, vectorW0, iterationTime)
 
-            val (cost: Double, features: Long) = data map { case (vectorX, y1) =>
-              val y0 = sigmod(vectorW, vectorX)
-              val err = learningRate(iterationTime) * (y0 - y1)
-
-              vectorX foreach { case ((j, xj)) if xj != 0.0 =>
-                vectorW += j -> (vectorW.getOrElse(j, 0.0) - err * xj)
-              }
-              val _cost = y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
-              (_cost, vectorX.size.toLong)
-            } reduce ((a, b) => (a._1 + b._1, a._2 + b._2))
-
-            totalCost = -cost
-            totalSamples += data.size
-            totalFeatures += features
+            rddTotalCost = -cost
 
             val grad = getGradient(vectorW0, vectorW, iterationTime, data.size)
               .toArray
               .sortBy(_._1)
+            // 可能需要多次推送
             pshandler.PUSH(grad.map(_._1), grad.map(_._2)) { result =>
-              ()
+              logInfo(s"PUSH Operation result = $result")
             }
           }
         }
 
-        List((totalSamples, totalFeatures, totalCost)).iterator
-      }
-      val (totalSamples: Long, totalFeatures: Long, totalCost: Double) = records.reduce {
-        case (a, b) =>
-          (a._1 + b._1, a._2 + b._2, a._3 + b._3)
-      }
+        Iterable((rddTotalSamples, rddTotalFeatures, rddTotalCost)).iterator
+      } reduce { case (a, b) => (a._1 + b._1, a._2 + b._2, a._3 + b._3) }
+
+    logInfo(s" Start Iteration $iterationTime")
+    logInfo(s" End Iteration $iterationTime")
+    logInfo(s" ---- Summary ----")
+    logInfo(s"  Samples : $totalSamples")
+    if (totalSamples > 0)
+      logInfo(s"  Average Non Zero Feature Number : ${totalFeatures.toDouble / totalSamples.toDouble}")
+    logInfo(s"  Total Cost : $totalCost")
+
+    val logLoss = if (totalSamples > 0)
+      totalCost / totalSamples
+    else
+      throw new Exception("Samples Set is Empty")
+    diffLogLoss = (logLoss - lastLogLoss)
+    lastLogLoss = logLoss
+
+    ???
+  }
+
+
+  protected def trainASGDRDD(
+                              trains: RDD[(mutable.HashMap[Long, Double], Int)],
+                              psHandler: PSClientHandler[Double]
+                            ): LogisticsRegressionModel = {
+
+    var iterationTime: Int = 0
+    var lastLogLoss: Double = 0.0f
+    var diffLogLoss: Double = 1.0f
+
+    var model: Option[LogisticsRegressionModel] = None
+
+    while (false == isFinishTraining(iterationTime, diffLogLoss)) {
+      iterationTime = iterationTime + 1
+
+      val (totalSamples: Long, totalFeatures: Long, totalCost: Double) = trains
+        .mapPartitions {
+          dataPartition =>
+            var rddTotalCost: Double = 0.0
+            var rddTotalSamples: Long = 0L
+            var rddTotalFeatures: Long = 0L
+
+            dataPartition.sliding(getBatchSize) foreach {
+              rawData =>
+                val data = mutable.Buffer(rawData: _*)
+                val keySet: Set[Long] = data
+                  .flatMap(_._1.keySet)
+                  .toSet
+                val keys: Array[Long] = keySet
+                  .toArray
+                  .sorted
+
+                psHandler.PULL(keys) {
+                  w0 =>
+                    val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
+                    val (cost: Double, features: Long, vectorW) = costFunc(data, vectorW0, iterationTime)
+
+                    rddTotalCost = -cost
+                    rddTotalSamples += data.size
+                    rddTotalFeatures += features
+
+                    val grad = getGradient(vectorW0, vectorW, iterationTime, data.size)
+                      .toArray
+                      .sortBy(_._1)
+                    psHandler.PUSH(grad.map(_._1), grad.map(_._2)) {
+                      result =>
+                        logInfo(s"PUSH Operation result = $result")
+                    }
+                }
+            }
+
+            Iterable((rddTotalSamples, rddTotalFeatures, rddTotalCost)).iterator
+        } reduce { case (a, b) => (a._1 + b._1, a._2 + b._2, a._3 + b._3) }
 
       logInfo(s" Start Iteration $iterationTime")
       logInfo(s" End Iteration $iterationTime")
       logInfo(s" ---- Summary ----")
       logInfo(s"  Samples : $totalSamples")
       if (totalSamples > 0)
-        logInfo(s"  Average Non Zero Feature Number : ${totalFeatures.toDouble / totalSamples.toDouble}")
+        logInfo(s"  Average Non Zero Feature Number : ${
+          totalFeatures.toDouble / totalSamples.toDouble
+        }")
       logInfo(s"  Total Cost : $totalCost")
 
       val logLoss = if (totalSamples > 0)
@@ -296,9 +391,39 @@ class LogisticRegression(val uid: String)
       diffLogLoss = (logLoss - lastLogLoss)
       lastLogLoss = logLoss
 
-    }
+      model = Some(generateLogisticModel(diffLogLoss, iterationTime, totalSamples, lastLogLoss, psHandler))
+      if (model.nonEmpty) {
+        // TODO do test set run
 
-    ???
+      }
+    }
+    model match {
+      case Some(m) => m
+      case None => throw new Exception(" No Module is Generated ")
+    }
+  }
+
+  def costFunc(
+                trainData: mutable.Buffer[(mutable.HashMap[Long, Double], Int)],
+                vectorWeight: mutable.Map[Long, Double],
+                iterationTime: Int
+              ): (Double, Long, mutable.Map[Long, Double]) = {
+    val vectorW: mutable.Map[Long, Double] = vectorWeight
+
+    val (cost: Double, features: Long) = trainData map {
+      case (vectorX, y1) =>
+        val y0 = sigmod(vectorW, vectorX)
+        val err = learningRate(iterationTime) * (y0 - y1)
+
+        vectorX foreach {
+          case ((j, xj)) if xj != 0.0 =>
+            vectorW += j -> (vectorW.getOrElse(j, 0.0) - err * xj)
+        }
+        val _cost = y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
+        (_cost, vectorX.size.toLong)
+    } reduce ((a, b) => (a._1 + b._1, a._2 + b._2))
+
+    (cost, features, vectorW)
   }
 
   def getGradient(
@@ -310,8 +435,9 @@ class LogisticRegression(val uid: String)
     val grad: mutable.Map[Long, Double] = mutable.Map.empty
 
     // Without L1 Reg and L2 Reg
-    (vectorW.keySet union vectorWOld.keySet) foreach { key =>
-      grad += key -> (vectorW.getOrElse(key, 0.0) - vectorWOld.getOrElse(key, 0.0)) / batchSize.toDouble
+    (vectorW.keySet union vectorWOld.keySet) foreach {
+      key =>
+        grad += key -> (vectorW.getOrElse(key, 0.0) - vectorWOld.getOrElse(key, 0.0)) / batchSize.toDouble
     }
 
     val gradL1 = if (getRegParam > 0.0) {
@@ -327,19 +453,32 @@ class LogisticRegression(val uid: String)
     gradL2
   }
 
-
-  // TODO 加上正则方法
-  def L1Reg: mutable.Map[Long, Double] => mutable.Map[Long, Double] = { grad =>
-    grad
+  /**
+    * L1
+    *
+    * TODO
+    *
+    * @return
+    */
+  def L1Reg: mutable.Map[Long, Double] => mutable.Map[Long, Double] = {
+    grad =>
+      grad
   }
 
-  def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double], Int) => mutable.Map[Long, Double] = { (weight, grad, iteration) =>
-    if (getRegParam != 1.0) {
-      grad foreach { case (i, wi) if weight.contains(i) =>
-        grad += i -> (1.0 - getRegParam) * learningRate(iteration) * weight(i)
+  /**
+    * L2 Reg
+    *
+    * @return
+    */
+  def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double], Int) => mutable.Map[Long, Double] = {
+    (weight, grad, iteration) =>
+      if (getRegParam != 1.0) {
+        grad foreach {
+          case (i, wi) if weight.contains(i) =>
+            grad += i -> (1.0 - getRegParam) * learningRate(iteration) * weight(i)
+        }
       }
-    }
-    grad
+      grad
   }
 
   def learningRate(iter: Int): Double = {
@@ -348,29 +487,110 @@ class LogisticRegression(val uid: String)
 
   protected def isFinishTraining(iter: Int, diffLogLoss: Double): Boolean = {
     if (iter > (getMaxIter - 1)) {
-      logInfo(s"Reach max Iteration(${getMaxIter}), Finish this Training")
+      logInfo(s"Reach max Iteration(${
+        getMaxIter
+      }), Finish this Training")
       true
     } else if (Math.abs(diffLogLoss) < getTol) {
-      logInfo(s"DiffLogLoss($diffLogLoss) < Tol(${getTol}), Finish this Training")
+      logInfo(s"DiffLogLoss($diffLogLoss) < Tol(${
+        getTol
+      }), Finish this Training")
       true
     } else
       false
   }
 
-  protected def trainSyncRDD(dataset: RDD[_]): LogisticsRegressionModel = {
-    ???
-  }
+  def generateLogisticModel(
+                             diffLogLoss: Double,
+                             iteration: Int,
+                             samples: Long,
+                             lastLogLoss: Double,
+                             psHandler: PSClientHandler[Double]
+                           ): LogisticsRegressionModel = {
+    val model = new LogisticsRegressionModel(
+      intercept = intercept,
+      numFeatures = getNumOfFeatures,
+      numClasses = 2,
+      diffLogLoss = Some(diffLogLoss),
+      lastLogLoss = Some(lastLogLoss),
+      samples = Some(samples),
+      iteration = Some(iteration))
 
+    val conf = new Configuration()
+    val path = if (isFinishTraining(iteration, diffLogLoss))
+      getModelPath
+    else
+      List(getModelPath, iteration).mkString("--")
+    if (model.saveModel(psHandler, path, conf)) {
+      logInfo(s"Store Model into $path OK")
+    } else {
+      logError(s"Failed to Store Model into $path")
+    }
+    model
+  }
 }
 
 class LogisticsRegressionModel(
-                                //                                override val vector: Vector,
                                 val intercept: Double = 0.0f,
                                 val numFeatures: Long,
-                                val numClasses: Int = 2) {
+                                val numClasses: Int = 2,
+                                val diffLogLoss: Option[Double] = None,
+                                val lastLogLoss: Option[Double] = None,
+                                val samples: Option[Long] = None,
+                                val iteration: Option[Int] = None
+                              ) {
+  var path: Option[String] = None
+  var conf: Option[Configuration] = None
+
+  val version: String = "0.1"
+
+  def setModelPath(p: String, c: Configuration): Unit = {
+    path = Some(p)
+    conf = Some(c)
+  }
+
+  def header: String = {
+    var header = List("version " + version,
+      "solver_type " + "L2R_LR",
+      "nr_class " + numClasses,
+      "label " + "0 1",
+      "nr_feature " + numFeatures,
+      "bias " + intercept,
+      "type fold")
+    diffLogLoss foreach { dll =>
+      header = header ++ List("diffLogLoss " + dll)
+    }
+    lastLogLoss foreach { lll =>
+      header = header ++ List("lastLogLoss " + lastLogLoss)
+    }
+    samples foreach { s =>
+      header = header ++ List("samples " + samples)
+    }
+    iteration foreach { i =>
+      header = header ++ List("iteration " + iteration)
+    }
+    header = header ++ List("w")
+    header.mkString("\n")
+  }
+
+  def saveModel(psHandler: PSClientHandler[Double], path: String, conf: Configuration) = {
+    psHandler.SAVE(path, conf) { ret =>
+      println(s"Save Model into $path with Result $ret")
+      FileUtils.initHDFSFile(path + "part-0", conf) { _hdfs_file =>
+        FileUtils.printToFile(_hdfs_file) { _file_handler =>
+          _file_handler println header
+          _file_handler flush
+        }
+      }
+
+      setModelPath(path, conf)
+    }
+    // TODO chang to return True Or False
+    true
+  }
 
 }
-
+/**
 object LogisticsRegressionModel extends MLReadable[LogisticsRegressionModel] {
 
   /**
@@ -399,13 +619,14 @@ object LogisticsRegressionModel extends MLReadable[LogisticsRegressionModel] {
     extends MLWriter {
 
     private case class Date(
-                             numClasses: Int,
+                             intercept: Double,
                              numFeatures: Long,
-                             isMultinomial: Boolean = false,
-                             iteration: Int,
-                             version: Int = 1,
-                             diffLogLoss: Double = 0.0f,
-                             lastLogLoss: Double = 0.0f)
+                             numClasses: Int = 2,
+                             diffLogLoss: Option[Double] = None,
+                             lastLogLoss: Option[Double] = None,
+                             samples: Option[Long] = None,
+                             iteration: Option[Int] = None
+                           )
 
     override protected def saveImpl(path: String): Unit = {
       // Default
@@ -437,4 +658,4 @@ object LogisticsRegressionModel extends MLReadable[LogisticsRegressionModel] {
   }
 
 }
-
+  **/

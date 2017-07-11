@@ -342,7 +342,7 @@ private trait ModelPath extends Params {
     doc = "Model Path for Store Model, including data and parameters.",
     isValid = { ss: String => ss.nonEmpty && ss != "" })
 
-  final def getPath: String = $(path)
+  final def getModelPath: String = $(path)
 }
 
 /**

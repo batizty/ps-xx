@@ -3,6 +3,7 @@ package angela.core
 import angela.exception.{PullMessageException, PushMessageException}
 import angela.utils.Logging
 import glint.models.client.BigVector
+import org.apache.hadoop.conf.Configuration
 import org.joda.time.DateTime
 
 import scala.concurrent.ExecutionContext
@@ -74,6 +75,21 @@ class GlintPSClientHandler[@specialized(Int, Long, Double, Float) V](vector: Big
     }
 
     loop()
+  }
+
+  override def SAVE(path: String, conf: Configuration)(f: Boolean => Unit): Unit = {
+    val _stime = DateTime.now
+
+    vector.save(path, Some(conf)) onComplete {
+      case Success(ret: Boolean) if ret == true =>
+        logInfo(s" Save Date Into HDFS ${path} Used ${logUsedTime(_stime)} ms")
+        f(ret)
+      case Failure(err) =>
+        logError(s" Save Failed Data Into HDFS ${path}", err)
+      case _ =>
+        logError(s" Save Failed Data Into HDFS Failed")
+    }
+    ()
   }
 
   private def logUsedTime(_stime: DateTime): Long = {
