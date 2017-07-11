@@ -9,13 +9,13 @@ import org.joda.time.DateTime
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
+import scala.reflect.runtime.universe.TypeTag
 import scala.util.{Failure, Success}
-import scala.reflect.runtime.universe.{TypeTag, typeOf}
 
 /**
   * Created by tuoyu on 04/07/2017.
   */
-class GlintPSClientHandler[@specialized(Int, Long, Double, Float) V](vector: BigVector[V])
+class GlintPSClientHandler[V](vector: BigVector[V])
   extends PSClientHandler[V] with Logging {
 
   val maxRetry = 3
