@@ -13,6 +13,7 @@ private trait HasRegParam extends Params {
 
   /**
     * Param for regularization parameter (&gt;= 0).
+    *
     * @group param
     */
   final val regParam: DoubleParam = new DoubleParam(this, "regParam", "regularization parameter (>= 0)", ParamValidators.gtEq(0))
@@ -28,6 +29,7 @@ private trait HasMaxIter extends Params {
 
   /**
     * Param for maximum number of iterations (&gt;= 0).
+    *
     * @group param
     */
   final val maxIter: IntParam = new IntParam(this, "maxIter", "maximum number of iterations (>= 0)", ParamValidators.gtEq(0))
@@ -43,6 +45,7 @@ private trait HasFeaturesCol extends Params {
 
   /**
     * Param for features column name.
+    *
     * @group param
     */
   final val featuresCol: Param[String] = new Param[String](this, "featuresCol", "features column name")
@@ -60,6 +63,7 @@ private trait HasLabelCol extends Params {
 
   /**
     * Param for label column name.
+    *
     * @group param
     */
   final val labelCol: Param[String] = new Param[String](this, "labelCol", "label column name")
@@ -77,6 +81,7 @@ private trait HasPredictionCol extends Params {
 
   /**
     * Param for prediction column name.
+    *
     * @group param
     */
   final val predictionCol: Param[String] = new Param[String](this, "predictionCol", "prediction column name")
@@ -94,6 +99,7 @@ private trait HasRawPredictionCol extends Params {
 
   /**
     * Param for raw prediction (a.k.a. confidence) column name.
+    *
     * @group param
     */
   final val rawPredictionCol: Param[String] = new Param[String](this, "rawPredictionCol", "raw prediction (a.k.a. confidence) column name")
@@ -111,6 +117,7 @@ private trait HasProbabilityCol extends Params {
 
   /**
     * Param for Column name for predicted class conditional probabilities. Note: Not all models output well-calibrated probability estimates! These probabilities should be treated as confidences, not precise probabilities.
+    *
     * @group param
     */
   final val probabilityCol: Param[String] = new Param[String](this, "probabilityCol", "Column name for predicted class conditional probabilities. Note: Not all models output well-calibrated probability estimates! These probabilities should be treated as confidences, not precise probabilities")
@@ -128,6 +135,7 @@ private trait HasThreshold extends Params {
 
   /**
     * Param for threshold in binary classification prediction, in range [0, 1].
+    *
     * @group param
     */
   final val threshold: DoubleParam = new DoubleParam(this, "threshold", "threshold in binary classification prediction, in range [0, 1]", ParamValidators.inRange(0, 1))
@@ -146,6 +154,7 @@ private trait HasFitIntercept extends Params {
 
   /**
     * Param for whether to fit an intercept term.
+    *
     * @group param
     */
   final val fitIntercept: BooleanParam = new BooleanParam(this, "fitIntercept", "whether to fit an intercept term")
@@ -163,6 +172,7 @@ private trait HasHandleInvalid extends Params {
 
   /**
     * Param for how to handle invalid entries. Options are skip (which will filter out rows with bad values), or error (which will throw an error). More options may be added later.
+    *
     * @group param
     */
   final val handleInvalid: Param[String] = new Param[String](this, "handleInvalid", "how to handle invalid entries. Options are skip (which will filter out rows with bad values), or error (which will throw an error). More options may be added later", ParamValidators.inArray(Array("skip", "error")))
@@ -178,6 +188,7 @@ private trait HasStandardization extends Params {
 
   /**
     * Param for whether to standardize the training features before fitting the model.
+    *
     * @group param
     */
   final val standardization: BooleanParam = new BooleanParam(this, "standardization", "whether to standardize the training features before fitting the model")
@@ -195,6 +206,7 @@ private trait HasSeed extends Params {
 
   /**
     * Param for random seed.
+    *
     * @group param
     */
   final val seed: LongParam = new LongParam(this, "seed", "random seed")
@@ -212,6 +224,7 @@ private trait HasElasticNetParam extends Params {
 
   /**
     * Param for the ElasticNet mixing parameter, in range [0, 1]. For alpha = 0, the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty.
+    *
     * @group param
     */
   final val elasticNetParam: DoubleParam = new DoubleParam(this, "elasticNetParam", "the ElasticNet mixing parameter, in range [0, 1]. For alpha = 0, the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty", ParamValidators.inRange(0, 1))
@@ -227,6 +240,7 @@ private trait HasTol extends Params {
 
   /**
     * Param for the convergence tolerance for iterative algorithms (&gt;= 0).
+    *
     * @group param
     */
   final val tol: DoubleParam = new DoubleParam(this, "tol", "the convergence tolerance for iterative algorithms (>= 0)", ParamValidators.gtEq(0))
@@ -242,6 +256,7 @@ private trait HasStepSize extends Params {
 
   /**
     * Param for Step size to be used for each iteration of optimization (&gt; 0).
+    *
     * @group param
     */
   final val stepSize: DoubleParam = new DoubleParam(this, "stepSize", "Step size to be used for each iteration of optimization (> 0)", ParamValidators.gt(0))
@@ -257,6 +272,7 @@ private trait HasWeightCol extends Params {
 
   /**
     * Param for weight column name. If this is not set or empty, we treat all instance weights as 1.0.
+    *
     * @group param
     */
   final val weightCol: Param[String] = new Param[String](this, "weightCol", "weight column name. If this is not set or empty, we treat all instance weights as 1.0")
@@ -272,6 +288,7 @@ private trait HasSolver extends Params {
 
   /**
     * Param for the solver algorithm for optimization. If this is not set or empty, default value is 'auto'.
+    *
     * @group param
     */
   final val solver: Param[String] = new Param[String](this, "solver", "the solver algorithm for optimization. If this is not set or empty, default value is 'auto'")
@@ -289,6 +306,7 @@ private trait HasAggregationDepth extends Params {
 
   /**
     * Param for suggested depth for treeAggregate (&gt;= 2).
+    *
     * @group expertParam
     */
   final val aggregationDepth: IntParam = new IntParam(this, "aggregationDepth", "suggested depth for treeAggregate (>= 2)", ParamValidators.gtEq(2))
@@ -308,7 +326,7 @@ private trait ParameterServerCount extends Params {
     */
   final val parameterServerCount: IntParam = new IntParam(this, "parameterServerCount", "parameter server count", ParamValidators.gtEq(2))
 
-  setDefault(parameterServerCount, 2)
+  setDefault(parameterServerCount, 0)
 
   final def getParameterServerCount: Int = $(parameterServerCount)
 }
@@ -352,7 +370,11 @@ private trait NumOfFeatures extends Params {
   /**
     * Param for model features
     */
-  final val numOfFeatures: LongParam = new LongParam(this, "numOfFeatures", "number of features for this model")
+  final val numOfFeatures: LongParam = new LongParam(
+    this,
+    "numOfFeatures",
+    "number of features for this model",
+    ParamValidators.gt[Long](10))
 
   final def getNumOfFeatures: Long = $(numOfFeatures)
 }
@@ -386,19 +408,27 @@ private trait TrainDataSetSplitRatio extends Params {
 }
 
 private trait BatchSize extends Params {
-  final val batchSize: LongParam = new LongParam(this, "batchSize", "Batch Size for number of samples to update gradient", ParamValidators.gtEq(10L))
+  final val batchSize: IntParam = new IntParam(
+    this,
+    "batchSize",
+    "Batch Size for number of samples to update gradient",
+    ParamValidators.gtEq(10))
 
-  setDefault[Long](batchSize, 1000L)
+  setDefault[Int](batchSize, 1000)
 
-  final def getBatchSize: Long = $(batchSize)
+  final def getBatchSize: Int = $(batchSize)
 }
 
 private trait LearningRate extends Params {
-  final val learningRate: DoubleParam = new DoubleParam(this, "learningRate", "Learning for gradient for solve LR", ParamValidators.gt(0.001))
+  final val learningRate: DoubleParam = new DoubleParam(
+    this,
+    "learningRate",
+    "Learning for gradient for solve LR",
+    ParamValidators.gt(0.001))
 
   setDefault[Double](learningRate, 1.0)
 
-  final def getLearningRate: Double = $(learningRate)
+  final def getInitLearningRate: Double = $(learningRate)
 }
 
 private trait LearningRateDecay extends Params {
@@ -408,5 +438,14 @@ private trait LearningRateDecay extends Params {
 
   final def getLearningRateDecay: Double = $(learningRateDecay)
 }
+
+private trait MetricStep extends Params {
+  final val metricStep: IntParam = new IntParam(this, "metricStep", "Every Step will do some metric", ParamValidators.gt(3))
+
+  setDefault[Int](metricStep, 5)
+
+  final def getMetricStep: Int = $(metricStep)
+}
+
 // scalastyle:on
 
