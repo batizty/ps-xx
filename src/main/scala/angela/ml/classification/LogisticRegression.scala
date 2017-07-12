@@ -27,11 +27,12 @@ import scala.collection.mutable.ListBuffer
   *
   * TODO
   * 1 搞定L1正则 -- TODO
+  * 2 忘记了 == Done
   * 3 实现SS
   * 4 拆开实现逻辑
   * 5 链接上ps接口
   * 6 加上min max threshold
-  * 7 加上测试auc logdiff的代码
+  * 7 加上测试 auc logdiff的代码 -- Done
   * 8 加上参数配置部分代码 -- Done
   * 9 读取模型
   * 10 LogParams -- Done
@@ -272,6 +273,7 @@ class LogisticRegression(val uid: String)
     * Init Parameter Server Connection and setting up model parameters which are related with
     * model, it is preparation for later training
     * TODO parameter should could init Parameter Server Client Handler
+    * Move this part to PSClient
     */
   def connect(): PSClientHandler[Double] = {
     /**
@@ -342,11 +344,6 @@ class LogisticRegression(val uid: String)
     } else {
       trainSSPRDD(dataset, pshandler)
     }
-
-    // TODO 加上测试的代码
-
-    // TODO add LogisticRegression Model
-    ???
   }
 
   /**
