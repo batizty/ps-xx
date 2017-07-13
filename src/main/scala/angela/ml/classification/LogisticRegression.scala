@@ -251,9 +251,7 @@ class LogisticRegression(val uid: String)
     ???
   }
 
-  /**
-    * Default intercept 0.0
-    */
+  /** Default intercept 0.0 **/
   private val intercept: Double = 0.0
 
   /**
@@ -261,7 +259,7 @@ class LogisticRegression(val uid: String)
     *
     * @param weight Vector W
     * @param x      Vector x
-    * @return y
+    * @return y predication value
     */
   private def sigmoid(weight: mutable.Map[Long, Double], x: mutable.Map[Long, Double]): Double = {
     val margin: Double = x.filterNot(_._2 == 0.0f)
@@ -276,9 +274,11 @@ class LogisticRegression(val uid: String)
       1.0 / (1.0 + math.exp(-margin))
   }
 
+  /** _min sigmoid function min threshold **/
   @inline
   private def _min: Double = 1.0 / (1.0 + 1E-10)
 
+  /** _max sigmoid function max threshold **/
   @inline
   private def _max: Double = 1.0 / (1.0 + 1E9)
 
@@ -318,9 +318,7 @@ class LogisticRegression(val uid: String)
   }
 
 
-  /**
-    * Records all Parameters for this training
-    */
+  /** Records all Parameters for this training **/
   def logParameters(): Unit = {
     log.info("")
     log.info("> Training Parameters <")
@@ -346,16 +344,21 @@ class LogisticRegression(val uid: String)
     log.info("")
   }
 
-  /** Train Jobs **/
-  def trainRDD(dataset: RDD[(mutable.HashMap[Long, Double], Int)]): LogisticsRegressionModel = {
+  /**
+    * Trainning Job With Parameter Server Support
+    *
+    * @param dataset Trainning and A litty Tiny Verify Test DataSet
+    * @return LogisticRegressionModel
+    */
+  def trainRDD(dataset: RDD[(mutable.HashMap[Long, Double], Int)]): LogisticRegressionModel = {
     logParameters()
 
-    val pshandler = connect()
+    val psHandler = connect()
 
     if (IsAsynchronousAlgorithm) {
-      trainASGDRDD(dataset, pshandler)
+      trainASGDRDD(dataset, psHandler)
     } else {
-      trainSSPRDD(dataset, pshandler)
+      trainSSPRDD(dataset, psHandler)
     }
   }
 
@@ -365,8 +368,8 @@ class LogisticRegression(val uid: String)
     *
     * @return RDD[T]
     */
-  private def splitTrainDataSet[T](dataset: RDD[T]): (RDD[T], RDD[T]) = {
-    val Array(trains, test) = dataset
+  private def splitTrainDataSet[T](dataSet: RDD[T]): (RDD[T], RDD[T]) = {
+    val Array(trains, test) = dataSet
       .randomSplit(Array(getSplitRatio, 1 - getSplitRatio))
 
     @tailrec
@@ -381,10 +384,17 @@ class LogisticRegression(val uid: String)
     (trains, loop(test))
   }
 
+  /**
+    * Train Algorithm with SSP Algorithm, which will pull and push all data one rdd per time
+    *
+    * @param trains    Training DataSet
+    * @param psHandler parameter interface to connect with ps
+    * @return LogisticsRegressionModel
+    */
   protected def trainSSPRDD(
                              trains: RDD[(mutable.HashMap[Long, Double], Int)],
                              psHandler: PSClientHandler[Double]
-                           ): LogisticsRegressionModel = {
+                           ): LogisticRegressionModel = {
 
     var iterationTime: Int = 0
     var lastLogLoss: Double = 0.0f
@@ -409,7 +419,7 @@ class LogisticRegression(val uid: String)
 
         while (isFinishTraining(iterationTime, diffLogLoss)) {
           iterationTime = iterationTime + 1
-          // 可能需要多次拉取
+          // TODO 可能需要多次拉取
           psHandler.PULL(keys) { w0 =>
             val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
             val (cost: Double, features: Long, vectorW) = costFunc(data, vectorW0, iterationTime)
@@ -433,12 +443,29 @@ class LogisticRegression(val uid: String)
     ???
   }
 
+  private def getKeys(
+                       data: mutable.Buffer[(mutable.HashMap[Long, Double], Int)]
+                     ): Array[Long] = {
+    val x: Array[Long] = data
+      .flatMap(_._1.keySet)
+      .toSet
+      .toArray
+    x.sorted
+  }
+
+  /**
+    * Train Algorithm with ASGD Algorithm, which will pull and push with a little batch data
+    *
+    * @param dataSet   Training DataSet
+    * @param psHandler parameter interface to connect with ps
+    * @return LogisticsRegressionModel
+    */
   protected def trainASGDRDD(
-                              dataset: RDD[(mutable.HashMap[Long, Double], Int)],
+                              dataSet: RDD[(mutable.HashMap[Long, Double], Int)],
                               psHandler: PSClientHandler[Double]
-                            ): LogisticsRegressionModel = {
+                            ): LogisticRegressionModel = {
     type T = (mutable.HashMap[Long, Double], Int)
-    val (trains: RDD[T], tests: RDD[T]) = splitTrainDataSet[T](dataset)
+    val (trains: RDD[T], tests: RDD[T]) = splitTrainDataSet[T](dataSet)
 
     var iterationTime: Int = 0
     var lastLogLoss: Double = 0.0f
@@ -446,7 +473,7 @@ class LogisticRegression(val uid: String)
 
     logInfo(s" ---> Start Iteration $iterationTime <---")
 
-    var model: Option[LogisticsRegressionModel] = None
+    var model: Option[LogisticRegressionModel] = None
 
     while (!isFinishTraining(iterationTime, diffLogLoss)) {
       iterationTime = iterationTime + 1
@@ -460,12 +487,7 @@ class LogisticRegression(val uid: String)
           dataPartition.sliding(getBatchSize) foreach {
             rawData =>
               val data = mutable.Buffer(rawData: _*)
-              val keySet: Set[Long] = data
-                .flatMap(_._1.keySet)
-                .toSet
-              val keys: Array[Long] = keySet
-                .toArray
-                .sorted
+              val keys: Array[Long] = getKeys(data)
 
               psHandler.PULL(keys) {
                 w0 =>
@@ -508,7 +530,7 @@ class LogisticRegression(val uid: String)
       if (model.isDefined &&
         !tests.isEmpty() &&
         (iterationTime / getMetricStep == 0))
-        verifyWithTinyTests(tests, psHandler)
+        metrics(tests, psHandler)
     }
 
     model match {
@@ -517,13 +539,19 @@ class LogisticRegression(val uid: String)
     }
   }
 
-  private def verifyWithTinyTests(
-                                   tests: RDD[(mutable.HashMap[Long, Double], Int)],
-                                   psHandler: PSClientHandler[Double]
-                                 ): Unit = {
-    val predicationAndLable: RDD[(Double, Double)] = predict(tests, psHandler)
+  /**
+    * Get a summary about this iteration in a tiny dataset
+    *
+    * @param tests Test Data Set, which is just a very little
+    * @param psHandler Parameter Server Interface
+    */
+  private def metrics(
+                       tests: RDD[(mutable.HashMap[Long, Double], Int)],
+                       psHandler: PSClientHandler[Double]
+                     ): Unit = {
+    val predicationAndLabel: RDD[(Double, Double)] = predict(tests, psHandler)
       .map(x => (x._1, x._2.toDouble))
-    val metrics = new BinaryClassificationMetrics(predicationAndLable)
+    val metrics = new BinaryClassificationMetrics(predicationAndLabel)
     logInfo(" > Binary Classification Metrics <")
 
     val auPRC = metrics.areaUnderPR
@@ -534,7 +562,7 @@ class LogisticRegression(val uid: String)
     logInfo(" Area under ROC : " + auROC)
 
     // ACC
-    val acc = Accuracy.of(predicationAndLable)
+    val acc = Accuracy.of(predicationAndLabel)
     logInfo(" Accuracy : " + acc)
   }
 
@@ -676,8 +704,8 @@ class LogisticRegression(val uid: String)
                              samples: Long,
                              lastLogLoss: Double,
                              psHandler: PSClientHandler[Double]
-                           ): LogisticsRegressionModel = {
-    val model = new LogisticsRegressionModel(
+                           ): LogisticRegressionModel = {
+    val model = new LogisticRegressionModel(
       intercept = intercept,
       numFeatures = getNumOfFeatures,
       numClasses = 2,
@@ -700,15 +728,15 @@ class LogisticRegression(val uid: String)
   }
 }
 
-class LogisticsRegressionModel(
-                                val intercept: Double = 0.0f,
-                                val numFeatures: Long,
-                                val numClasses: Int = 2,
-                                val diffLogLoss: Option[Double] = None,
-                                val lastLogLoss: Option[Double] = None,
-                                val samples: Option[Long] = None,
-                                val iteration: Option[Int] = None
-                              ) {
+class LogisticRegressionModel(
+                               val intercept: Double = 0.0f,
+                               val numFeatures: Long,
+                               val numClasses: Int = 2,
+                               val diffLogLoss: Option[Double] = None,
+                               val lastLogLoss: Option[Double] = None,
+                               val samples: Option[Long] = None,
+                               val iteration: Option[Int] = None
+                             ) {
   var path: Option[String] = None
   var conf: Option[Configuration] = None
 
@@ -728,18 +756,18 @@ class LogisticsRegressionModel(
       "bias " + intercept,
       "type fold")
     diffLogLoss foreach { dll =>
-      header = header ++ List("diffLogLoss " + dll)
+      header ++= List("diffLogLoss " + dll)
     }
     lastLogLoss foreach { lll =>
-      header = header ++ List("lastLogLoss " + lastLogLoss)
+      header ++= List("lastLogLoss " + lastLogLoss)
     }
     samples foreach { s =>
-      header = header ++ List("samples " + samples)
+      header ++= List("samples " + samples)
     }
     iteration foreach { i =>
-      header = header ++ List("iteration " + iteration)
+      header ++= List("iteration " + iteration)
     }
-    header = header ++ List("w")
+    header ++= List("w")
     header.mkString("\n")
   }
 
@@ -755,7 +783,6 @@ class LogisticsRegressionModel(
 
       setModelPath(path, conf)
     }
-    // TODO chang to return True Or False
     true
   }
 }
