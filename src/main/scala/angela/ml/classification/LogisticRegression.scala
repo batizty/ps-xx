@@ -2,41 +2,43 @@ package angela.ml.classification
 
 import akka.actor.ActorRef
 import akka.util.Timeout
-import angela.core.PSClientHandler
-import angela.core.GlintPSClientHandler
+import angela.core.{GlintPSClientHandler, PSClientHandler}
+import angela.exception._
+import angela.metric.Accuracy
+import angela.utils.{FileUtils, Logging}
+import com.typesafe.config.ConfigFactory
+import glint.Client
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.ml.param.ParamMap
 import org.apache.spark.ml.util.Identifiable
+import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Dataset
-import com.typesafe.config.ConfigFactory
-import glint.Client
 
+import scala.annotation.tailrec
+import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext}
-import scala.collection.mutable
-import angela.utils.{FileUtils, Logging}
-import angela.exception._
-import angela.metric.Accuracy
-import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+import scala.language.implicitConversions
+import scala.language.postfixOps
 
-import scala.collection.mutable.ListBuffer
 
 /**
   * Logistic regression. Supports binomial logistic regression with Parameter Server Support.
   *
-  * TODO
-  * 1 搞定L1正则 -- TODO
-  * 2 忘记了 == Done
-  * 3 实现SS
-  * 4 拆开实现逻辑
-  * 5 链接上ps接口
-  * 6 加上min max threshold
-  * 7 加上测试 auc logdiff的代码 -- Done
-  * 8 加上参数配置部分代码 -- Done
-  * 9 读取模型
-  * 10 LogParams -- Done
-  * 11 小量级别的test集合划分 -- Done
+  * * Features
+  *  1. L1, L2
+  *  2. SSP, ASGD
+  *  3. split implementation
+  *  4. connect multiply ps interface
+  *  5. min max threshold -- Done
+  *  6. tiny test data set -- Done
+  *  7. read model
+  *  8. add Parameters Setting -- Done
+  *  9. save model -- Done
+  *  10. record parameters-- Done
+  *  11. tiny verify dataset -- Done
   */
 private[classification] trait LogisticRegressionParams
   extends HasRegParam
@@ -83,6 +85,8 @@ class LogisticRegression(val uid: String)
   val MinimumPsServerRatio: Double = 0.5f
   val AcceptablePsServerRatio: Double = 0.8f
   val MAX_TEST_DATA_SET_COUNT: Long = 1000000L
+
+  def GRADIENT_MINIMUM_THRESHOLD: Double = getTol * 1E-4
 
   def this() = this(Identifiable.randomUID("logreg-withps-asgd"))
 
@@ -136,8 +140,7 @@ class LogisticRegression(val uid: String)
   /**
     * This this the lamda in alpha * (lamda * ||w||) + (1 - alpha) * ((lamda / 2) * (Wt * W)),
     *
-    * @param value
-    * @return
+    * @group setParam
     */
   def setElasticNetParam(value: Double): this.type = set(elasticNetParam, value)
 
@@ -246,7 +249,6 @@ class LogisticRegression(val uid: String)
   def train(dataset: Dataset[_], handlePersistence: Boolean): LogisticRegression = {
     // TODO support Spark Standard interface
     ???
-
   }
 
   /**
@@ -266,21 +268,32 @@ class LogisticRegression(val uid: String)
       .map { case (index, value) =>
         weight.getOrElse(index, 0.0) * value
       }.sum + intercept
-    1.0 / (1.0 + math.exp(-margin))
+    if (margin <= -23) {
+      _min
+    } else if (margin >= 20) {
+      _max
+    } else
+      1.0 / (1.0 + math.exp(-margin))
   }
+
+  @inline
+  private def _min: Double = 1.0 / (1.0 + 1E-10)
+
+  @inline
+  private def _max: Double = 1.0 / (1.0 + 1E9)
 
   /**
     * Init Parameter Server Connection and setting up model parameters which are related with
     * model, it is preparation for later training
     * TODO parameter should could init Parameter Server Client Handler
-    * Move this part to PSClient
+    * TODO Move this part to PSClient
     */
   def connect(): PSClientHandler[Double] = {
     /**
       * Later Add Detail Configurations
       */
     val config = ConfigFactory
-      .parseString(s"glint.master.host=${getMaster}")
+      .parseString(s"glint.master.host=" + getMaster)
 
     val client = Client(config)
     val vector = client
@@ -290,16 +303,16 @@ class LogisticRegression(val uid: String)
 
     if (servers.isEmpty) {
       vector.destroy()
-      throw new NoParameterServerException("Server List is Empty")
-    } else if (getParameterServerCount * MinimumPsServerRatio > servers.size) {
+      throw NoParameterServerException("Server List is Empty")
+    } else if (getParameterServerCount * MinimumPsServerRatio > servers.length) {
       vector.destroy()
-      throw new NotEnoughParameterServerException(s"Training Needs Parameter Server Count " +
+      throw NotEnoughParameterServerException(s"Training Needs Parameter Server Count " +
         s": ${getParameterServerCount * MinimumPsServerRatio}, " +
-        s"but now available parameter server count : ${servers.size}")
-    } else if (getParameterServerCount * AcceptablePsServerRatio > servers.size) {
+        s"but now available parameter server count : ${servers.length}")
+    } else if (getParameterServerCount * AcceptablePsServerRatio > servers.length) {
       logError("Training Needs Minimum Parameter Server Count : " +
         (getParameterServerCount * AcceptablePsServerRatio) +
-        s" , now available parameter server count : ${servers.size} just fit the needs")
+        s" , now available parameter server count : ${servers.length} just fit the needs")
     }
     GlintPSClientHandler(vector)
   }
@@ -356,6 +369,7 @@ class LogisticRegression(val uid: String)
     val Array(trains, test) = dataset
       .randomSplit(Array(getSplitRatio, 1 - getSplitRatio))
 
+    @tailrec
     def loop(data: RDD[T]): RDD[T] = {
       val count = data.count()
       if (count > MAX_TEST_DATA_SET_COUNT) {
@@ -369,7 +383,7 @@ class LogisticRegression(val uid: String)
 
   protected def trainSSPRDD(
                              trains: RDD[(mutable.HashMap[Long, Double], Int)],
-                             pshandler: PSClientHandler[Double]
+                             psHandler: PSClientHandler[Double]
                            ): LogisticsRegressionModel = {
 
     var iterationTime: Int = 0
@@ -396,17 +410,18 @@ class LogisticRegression(val uid: String)
         while (isFinishTraining(iterationTime, diffLogLoss)) {
           iterationTime = iterationTime + 1
           // 可能需要多次拉取
-          pshandler.PULL(keys) { w0 =>
+          psHandler.PULL(keys) { w0 =>
             val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
             val (cost: Double, features: Long, vectorW) = costFunc(data, vectorW0, iterationTime)
 
             rddTotalCost = -cost
 
             val grad = getGradient(vectorW0, vectorW, iterationTime, data.size)
+              .filter(_._2 > GRADIENT_MINIMUM_THRESHOLD)
               .toArray
               .sortBy(_._1)
             // 可能需要多次推送
-            pshandler.PUSH(grad.map(_._1), grad.map(_._2)) { result =>
+            psHandler.PUSH(grad.map(_._1), grad.map(_._2)) { result =>
               logInfo(s"PUSH Operation result = $result")
             }
           }
@@ -433,7 +448,7 @@ class LogisticRegression(val uid: String)
 
     var model: Option[LogisticsRegressionModel] = None
 
-    while (false == isFinishTraining(iterationTime, diffLogLoss)) {
+    while (!isFinishTraining(iterationTime, diffLogLoss)) {
       iterationTime = iterationTime + 1
 
       val (totalSamples: Long, totalFeatures: Long, totalCost: Double) = trains
@@ -486,13 +501,14 @@ class LogisticRegression(val uid: String)
         totalCost / totalSamples
       else
         throw new ParameterServerException("Training Sample Size is Zero")
-      diffLogLoss = (logLoss - lastLogLoss)
+      diffLogLoss = logLoss - lastLogLoss
       lastLogLoss = logLoss
 
       model = Some(generateLogisticModel(diffLogLoss, iterationTime, totalSamples, lastLogLoss, psHandler))
-      if (model.nonEmpty && false == tests.isEmpty() && (iterationTime / getMetricStep == 0)) {
+      if (model.isDefined &&
+        !tests.isEmpty() &&
+        (iterationTime / getMetricStep == 0))
         verifyWithTinyTests(tests, psHandler)
-      }
     }
 
     model match {
@@ -604,28 +620,26 @@ class LogisticRegression(val uid: String)
   }
 
   /**
-    * L1
+    * L1 Regular, Not support now
     *
-    * TODO Finish L1 Regular
-    *
-    * @return
+    * @return grad after with L1 Penalty
     */
   def L1Reg: mutable.Map[Long, Double] => mutable.Map[Long, Double] = {
-    grad =>
-      grad
+    grad => grad
   }
 
   /**
     * L2 Regular
     *
-    * @return
+    * @return grad after with L2 Penalty
     */
   def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double], Int) => mutable.Map[Long, Double] = {
     (weight, grad, iteration) =>
       if (getRegParam != 1.0) {
         grad foreach {
           case (i, wi) if weight.contains(i) =>
-            grad += i -> (1.0 - getRegParam) * getLearningRate(iteration) * weight(i)
+            val v = (1.0 - getRegParam) * getLearningRate(iteration) * weight(i)
+            grad += i -> v
         }
       }
       grad
@@ -633,9 +647,9 @@ class LogisticRegression(val uid: String)
 
   /**
     * Compute learning rate through iteration and init learing rate with decay
-    *  lr = lr_0 / math.sqrt(1.0 + decay * iteration)
+    * lr = lr_0 / math.sqrt(1.0 + decay * iteration)
     *
-    *  @param iteration Iteration Times
+    * @param iteration Iteration Times
     */
   def getLearningRate(iteration: Int): Double = {
     getInitLearningRate / Math.sqrt(1.0 + getLearningRateDecay * iteration)
@@ -735,7 +749,7 @@ class LogisticsRegressionModel(
       FileUtils.initHDFSFile(path + "part-0", conf) { _hdfs_file =>
         FileUtils.printToFile(_hdfs_file) { _file_handler =>
           _file_handler println header
-          _file_handler flush
+          _file_handler flush()
         }
       }
 
