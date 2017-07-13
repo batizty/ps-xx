@@ -7,6 +7,10 @@ import scala.language.postfixOps
 
 /**
   * Created by tuoyu on 13/07/2017.
+  *
+  * Parser For LibSvm Format Data
+  * LibSvmFormat should be:
+  * label key1:value1 key2:value2 key3:value3
   */
 object LibSvmParser {
 
