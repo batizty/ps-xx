@@ -380,13 +380,19 @@ private trait NumOfFeatures extends Params {
 }
 
 /**
+  * Trait for shared param IsAsynchronousAlgorithm
   *
+  * This option will be used as an option to choose ssp or asgd algorithm,
+  * if true, choose asgd, or not choose ssp
   */
 private trait IsAsynchronousAlgorithm extends Params {
   /**
     * Param for Algorithm whether Asynchronous or not
     */
-  final val isAsynchronousAlgorithm: BooleanParam = new BooleanParam(this, "IsAsynchronousAlgorithm", "During iteration, this algorithm is asynchronous or not")
+  final val isAsynchronousAlgorithm: BooleanParam = new BooleanParam(
+    this,
+    "IsAsynchronousAlgorithm",
+    "During iteration, this algorithm is asynchronous or not")
 
   setDefault(isAsynchronousAlgorithm, true)
 
@@ -394,19 +400,31 @@ private trait IsAsynchronousAlgorithm extends Params {
 }
 
 /**
-  *
+  * Trait for shared param Train Data set split ratio, this ratio will be used
+  * as randomSpilt param to split train dataset to two set, one for trainning, and
+  * the last for verify
   */
 private trait TrainDataSetSplitRatio extends Params {
   /**
     * Param for Split a very tiny tests set to show progress during training
     */
-  final val splitRatio: DoubleParam = new DoubleParam(this, "splitRatio", "Split out a tiny tests set to show progress during training", ParamValidators.inRange(0.0, 1.0))
+  final val splitRatio: DoubleParam = new DoubleParam(
+    this,
+    "splitRatio",
+    "Split out a tiny tests set to show progress during training",
+    ParamValidators.inRange(0.0, 1.0))
 
-  setDefault[Double](splitRatio, 0.0)
+  setDefault[Double](splitRatio, 0.95)
 
   final def getSplitRatio: Double = $(splitRatio)
 }
 
+/**
+  * Trait for shared param batchSize, this value used to split data in RDD, after
+  * $bathSize samples compute, connect with parameter server once
+  *
+  * Default batchSize equal 1000, suggestion value should be {100 ~ 100000}
+  */
 private trait BatchSize extends Params {
   final val batchSize: IntParam = new IntParam(
     this,
@@ -419,33 +437,56 @@ private trait BatchSize extends Params {
   final def getBatchSize: Int = $(batchSize)
 }
 
+/**
+  * Trait for shared param learningRate, this is init learningRate and will
+  * be used to compute lr through iteration
+  * learningRate / Math.sqrt(1 + dacay * iteration)
+  *
+  * Default value equal 1.0
+  */
 private trait LearningRate extends Params {
   final val learningRate: DoubleParam = new DoubleParam(
     this,
     "learningRate",
     "Learning for gradient for solve LR",
-    ParamValidators.gt(0.001))
+    ParamValidators.gt(0.1))
 
   setDefault[Double](learningRate, 1.0)
 
   final def getInitLearningRate: Double = $(learningRate)
 }
 
+/**
+  * Trait for shared param learningRateDecay
+  *
+  * Default value equal 0.5
+  */
 private trait LearningRateDecay extends Params {
-  final val learningRateDecay: DoubleParam = new DoubleParam(this, "learningRateDecay", "Decay of Learning Rate", ParamValidators.gt(0.001))
+  final val learningRateDecay: DoubleParam = new DoubleParam(
+    this,
+    "learningRateDecay",
+    "Decay of Learning Rate",
+    ParamValidators.gt(0.1))
 
   setDefault[Double](learningRateDecay, 0.5)
 
   final def getLearningRateDecay: Double = $(learningRateDecay)
 }
 
+/**
+  * Trait for shared param metricStep
+  *   Every metricStep, compute some metric in tiny veriy testdata
+  */
 private trait MetricStep extends Params {
-  final val metricStep: IntParam = new IntParam(this, "metricStep", "Every Step will do some metric", ParamValidators.gt(3))
+  final val metricStep: IntParam = new IntParam(
+    this,
+    "metricStep",
+    "Every Step will do some metric",
+    ParamValidators.gt(3))
 
   setDefault[Int](metricStep, 5)
 
   final def getMetricStep: Int = $(metricStep)
 }
-
 // scalastyle:on
 
