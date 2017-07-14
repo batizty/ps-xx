@@ -18,4 +18,13 @@ class LibSvmParserSpec extends FlatSpec with Matchers {
     result equals expect
   }
 
+  "Parser -1 to 0" should "OK" in {
+    val line = "-1 1:1 10:2 300:2"
+    val result = LibSvmParser.parse(line)
+    val expect: (mutable.HashMap[Long, Double], Int) = {
+      (mutable.HashMap(1L -> 1, 10L -> 2, 300L -> 1), 0)
+    }
+    result equals expect
+  }
+
 }

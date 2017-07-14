@@ -15,8 +15,11 @@ import scala.collection.mutable
 class LRTestSpec extends FlatSpec with Matchers {
 
   "A LR Test Running" should "Work fine" in {
-    val output = ""
-    val input = ""
+    val current = System.getProperty("user.dir")
+    println(s"current path = $current")
+
+    val output = "/user/tuoyu/models/lr.asgd.model"
+    val input = "/user/tuoyu/data/a4a"
 
     val spark = SparkSession
       .builder
@@ -47,7 +50,6 @@ class LRTestSpec extends FlatSpec with Matchers {
 
 
     lr.trainRDD(data)
-
   }
 
 }
