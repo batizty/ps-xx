@@ -1,5 +1,6 @@
 package angela.core
 
+import akka.util.Timeout
 import angela.exception.{PullMessageException, PushMessageException}
 import angela.utils.Logging
 import glint.models.client.BigVector
@@ -15,14 +16,11 @@ import scala.util.{Failure, Success}
 /**
   * Created by tuoyu on 04/07/2017.
   */
-class GlintPSClientHandler[V](vector: BigVector[V])
-  extends PSClientHandler[V] with Logging {
+class GlintPSClientHandler[V](vector: BigVector[V])(implicit val timeout: Duration, ec: ExecutionContext)
+  extends PSClientHandler[V] with Logging with Serializable {
 
   val maxRetry = 3
   val retrySleepMillis = 1000
-
-  implicit val timeout = 600 seconds
-  implicit val ec: ExecutionContext = global
 
   override def PULL(keys: Array[Long])(f: (Array[V]) => Unit): Unit = {
     val _stime = DateTime.now
@@ -98,6 +96,9 @@ class GlintPSClientHandler[V](vector: BigVector[V])
 }
 
 object GlintPSClientHandler {
+  implicit val timeout: Duration = 600 seconds
+  implicit val ec: ExecutionContext = global
+
   def apply[V: TypeTag](vector: BigVector[V]): GlintPSClientHandler[V] = {
     new GlintPSClientHandler[V](vector)
   }
