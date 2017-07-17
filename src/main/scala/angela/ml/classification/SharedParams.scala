@@ -324,9 +324,13 @@ private trait ParameterServerCount extends Params {
   /**
     * Param for suggested parameter server for Machine Learning Algorithm(&gt;=2)
     */
-  final val parameterServerCount: IntParam = new IntParam(this, "parameterServerCount", "parameter server count", ParamValidators.gtEq(2))
+  final val parameterServerCount: IntParam = new IntParam(
+    this,
+    "parameterServerCount",
+    "parameter server count",
+    ParamValidators.gtEq(2))
 
-  setDefault(parameterServerCount, 0)
+  setDefault(parameterServerCount, 2)
 
   final def getParameterServerCount: Int = $(parameterServerCount)
 }
@@ -482,7 +486,7 @@ private trait MetricStep extends Params {
     this,
     "metricStep",
     "Every Step will do some metric",
-    ParamValidators.gt(3))
+    ParamValidators.gtEq(1))
 
   setDefault[Int](metricStep, 5)
 
