@@ -1,6 +1,6 @@
 package angela.utils
 
-import java.io.DataOutputStream
+import java.io.{DataOutputStream, File}
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FSDataOutputStream
@@ -9,6 +9,12 @@ import org.apache.hadoop.fs.FSDataOutputStream
   * Created by tuoyu on 11/07/2017.
   */
 object FileUtils {
+
+  def initLocalFile(path: String)(f: java.io.File => Unit): Unit = {
+    val file = new File(path)
+    f(file)
+  }
+
 
   /**
     * Init HDFS File Handler for Writing
