@@ -15,11 +15,8 @@ import scala.collection.mutable
 class LRTestSpec extends FlatSpec with Matchers {
 
   "A LR Test Running" should "Work fine" in {
-    val current = System.getProperty("user.dir")
-    println(s"current path = $current")
-
-    val output = "/user/tuoyu/models/lr.asgd.model"
-    val input = "/user/tuoyu/data/a4a"
+    val output = "hdfs://10.77.100.41:9000/user/tuoyu/models/lr.asgd.model"
+    val input = "hdfs://10.77.100.41:9000/user/tuoyu/data/a4a"
 
     val spark = SparkSession
       .builder
@@ -43,9 +40,9 @@ class LRTestSpec extends FlatSpec with Matchers {
       .setLearningRateDecay(0.5)
       .setModelPath(output)
       .setMetricStep(1)
-      .setParameterServer(4)
-      .setParameterMaster("10.77.100.41")
-      .setBatchSize(100)
+      .setParameterServer(2)
+      .setParameterMaster("h107710042.cluster.ds.weibo.com")
+      .setBatchSize(20)
       .setAsyncAlgorithm(true)
 
 
