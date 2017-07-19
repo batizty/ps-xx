@@ -81,7 +81,7 @@ object LogisticRegression extends Logging {
 }
 
 class LogisticRegression(val uid: String)
-  extends LogisticRegressionParams with Logging {
+  extends LogisticRegressionParams with Logging with Serializable {
   val MinimumPsServerRatio: Double = 0.5f
   val AcceptablePsServerRatio: Double = 0.8f
   val MAX_TEST_DATA_SET_COUNT: Long = 1000000L
@@ -242,10 +242,6 @@ class LogisticRegression(val uid: String)
 
   override def copy(extra: ParamMap): LogisticRegression = defaultCopy(extra)
 
-  // implicit values
-  implicit val timeout: Timeout = 120 seconds
-  implicit val ec: ExecutionContext = ExecutionContext.Implicits.global
-
   def train(dataset: Dataset[_], handlePersistence: Boolean): LogisticRegression = {
     // TODO support Spark Standard interface
     ???
@@ -266,11 +262,11 @@ class LogisticRegression(val uid: String)
       .map { case (index, value) =>
         weight.getOrElse(index, 0.0) * value
       }.sum + intercept
-    if (margin <= -23) {
-      _min
-    } else if (margin >= 20) {
-      _max
-    } else
+//    if (margin <= -23) {
+//      _min
+//    } else if (margin >= 20) {
+//      _max
+//    } else
       1.0 / (1.0 + math.exp(-margin))
   }
 
@@ -294,6 +290,10 @@ class LogisticRegression(val uid: String)
       */
     val config = ConfigFactory
       .parseString(s"glint.master.host=" + getMaster)
+
+    // implicit values
+    implicit val timeout: Timeout = 120 seconds
+    implicit val ec: ExecutionContext = ExecutionContext.Implicits.global
 
     val client = Client(config)
     val vector = client
@@ -355,11 +355,17 @@ class LogisticRegression(val uid: String)
 
     val psHandler = connect()
 
-    if (IsAsynchronousAlgorithm) {
+    val model = if (IsAsynchronousAlgorithm) {
       trainASGDRDD(dataset, psHandler)
     } else {
       trainSSPRDD(dataset, psHandler)
     }
+
+    psHandler.DESTROY() { result =>
+      logInfo(s"Destroy PS Handler with Result $result")
+    }
+
+    model
   }
 
   /**
@@ -378,7 +384,10 @@ class LogisticRegression(val uid: String)
       if (count > MAX_TEST_DATA_SET_COUNT) {
         val Array(_, x) = data.randomSplit(Array(getSplitRatio, 1 - getSplitRatio))
         loop(x)
-      } else data
+      } else {
+        logInfo(s" > Verify Test Set Count : $count")
+        data
+      }
     }
 
     (trains, loop(test))
@@ -432,7 +441,7 @@ class LogisticRegression(val uid: String)
               .sortBy(_._1)
             // 可能需要多次推送
             psHandler.PUSH(grad.map(_._1), grad.map(_._2)) { result =>
-              logInfo(s"PUSH Operation result = $result")
+              // logInfo(s"PUSH Operation result = $result")
             }
           }
         }
@@ -484,7 +493,7 @@ class LogisticRegression(val uid: String)
           var rddTotalSamples: Long = 0L
           var rddTotalFeatures: Long = 0L
 
-          dataPartition.sliding(getBatchSize) foreach {
+          dataPartition.sliding(getBatchSize, getBatchSize) foreach {
             rawData =>
               val data = mutable.Buffer(rawData: _*)
               val keys: Array[Long] = getKeys(data)
@@ -503,7 +512,8 @@ class LogisticRegression(val uid: String)
                     .sortBy(_._1)
                   psHandler.PUSH(grad.map(_._1), grad.map(_._2)) {
                     result =>
-                      logInfo(s"PUSH Operation result = $result")
+                      ()
+                    //logInfo(s"PUSH Operation result = $result")
                   }
               }
           }
@@ -525,12 +535,15 @@ class LogisticRegression(val uid: String)
         throw new ParameterServerException("Training Sample Size is Zero")
       diffLogLoss = logLoss - lastLogLoss
       lastLogLoss = logLoss
+      logInfo(s"\tLogLoss: " + lastLogLoss / totalSamples)
 
-      model = Some(generateLogisticModel(diffLogLoss, iterationTime, totalSamples, lastLogLoss, psHandler))
-      if (model.isDefined &&
-        !tests.isEmpty() &&
-        (iterationTime / getMetricStep == 0))
-        metrics(tests, psHandler)
+      Thread.sleep(1000)
+
+      //model = Some(generateLogisticModel(diffLogLoss, iterationTime, totalSamples, lastLogLoss, psHandler))
+      //      if (model.isDefined &&
+      //        !tests.isEmpty() &&
+      //        (iterationTime / getMetricStep == 0))
+      computeMetrics(tests, psHandler)
     }
 
     model match {
@@ -542,27 +555,29 @@ class LogisticRegression(val uid: String)
   /**
     * Get a summary about this iteration in a tiny dataset
     *
-    * @param tests Test Data Set, which is just a very little
+    * @param tests     Test Data Set, which is just a very little
     * @param psHandler Parameter Server Interface
     */
-  private def metrics(
-                       tests: RDD[(mutable.HashMap[Long, Double], Int)],
-                       psHandler: PSClientHandler[Double]
-                     ): Unit = {
+  private def computeMetrics(
+                              tests: RDD[(mutable.HashMap[Long, Double], Int)],
+                              psHandler: PSClientHandler[Double]
+                            ): Unit = {
     val predicationAndLabel: RDD[(Double, Double)] = predict(tests, psHandler)
       .map(x => (x._1, x._2.toDouble))
+
     val metrics = new BinaryClassificationMetrics(predicationAndLabel)
-    logInfo(" > Binary Classification Metrics <")
 
     val auPRC = metrics.areaUnderPR
-    logInfo("  Area under precision-recall curve : " + auPRC)
 
     // AUROC
     val auROC = metrics.areaUnderROC
-    logInfo(" Area under ROC : " + auROC)
 
     // ACC
     val acc = Accuracy.of(predicationAndLabel)
+
+    logInfo(" > Metrics <")
+    logInfo(" Area under precision-recall curve : " + auPRC)
+    logInfo(" Area under ROC : " + auROC)
     logInfo(" Accuracy : " + acc)
   }
 
@@ -570,31 +585,33 @@ class LogisticRegression(val uid: String)
                tests: RDD[(mutable.HashMap[Long, Double], Int)],
                psHandler: PSClientHandler[Double]
              ): RDD[(Double, Int)] = {
-    tests mapPartitions { dataPartitions =>
-      val predictionAndLabel: mutable.ListBuffer[(Double, Int)] = new ListBuffer[(Double, Int)]()
+    logInfo(" Start Predication ")
+    val predicationAndLabel = tests.mapPartitions { dataPartitions =>
+      val _predicationAndLabel: mutable.ListBuffer[(Double, Int)] = mutable.ListBuffer()
+      var sz = 0
 
-      dataPartitions.sliding(getBatchSize) foreach { rawData =>
-        val data = mutable.Buffer(rawData: _*)
-        val keySet: Set[Long] = data
-          .flatMap(_._1.keySet)
-          .toSet
-        val keys: Array[Long] = keySet
-          .toArray
-          .sorted
-        psHandler.PULL(keys) {
-          w0 =>
+      dataPartitions.sliding(getBatchSize, getBatchSize) foreach {
+        rawData =>
+          val data = mutable.Buffer(rawData: _*)
+          val keys: Array[Long] = getKeys(data)
+          sz += data.size
+
+          psHandler.PULL(keys) { w0 =>
             val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
-
-            val predicts: List[(Double, Int)] = data map {
+            data foreach {
               case (vectorX, y1) =>
-                (sigmoid(vectorW0, vectorX), y1)
-            } toList
-
-            predictionAndLabel ++= predicts
-        }
+                _predicationAndLabel.+=:((sigmoid(vectorW0, vectorX), y1))
+            }
+          }
       }
-      predictionAndLabel.iterator
+
+      while (_predicationAndLabel.size != sz) {
+        logInfo(" Waiting for all result")
+        Thread.sleep(1000)
+      }
+      _predicationAndLabel.iterator
     }
+    predicationAndLabel
   }
 
   def costFunc(
@@ -613,7 +630,10 @@ class LogisticRegression(val uid: String)
           case ((j, xj)) if xj != 0.0 =>
             vectorW += j -> (vectorW.getOrElse(j, 0.0) - err * xj)
         }
-        val _cost = y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
+        val _cost = if (y1 == y0) getTol
+          else y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
+        logInfo(s" cost = ${_cost} y0 = $y0 y1 = $y1")
+
         (_cost, vectorX.size.toLong)
     } reduce ((a, b) => (a._1 + b._1, a._2 + b._2))
 
@@ -759,13 +779,13 @@ class LogisticRegressionModel(
       header ++= List("diffLogLoss " + dll)
     }
     lastLogLoss foreach { lll =>
-      header ++= List("lastLogLoss " + lastLogLoss)
+      header ++= List("lastLogLoss " + lll)
     }
     samples foreach { s =>
-      header ++= List("samples " + samples)
+      header ++= List("samples " + s)
     }
     iteration foreach { i =>
-      header ++= List("iteration " + iteration)
+      header ++= List("iteration " + i)
     }
     header ++= List("w")
     header.mkString("\n")
@@ -774,7 +794,8 @@ class LogisticRegressionModel(
   def saveModel(psHandler: PSClientHandler[Double], path: String, conf: Configuration) = {
     psHandler.SAVE(path, conf) { ret =>
       println(s"Save Model into $path with Result $ret")
-      FileUtils.initHDFSFile(path + "part-0", conf) { _hdfs_file =>
+      FileUtils.initLocalFile("/Users/tuoyu/github/ps-xx/data/" + "part-0") { _hdfs_file =>
+        //      FileUtils.initHDFSFile(path + "part-0", conf) { _hdfs_file =>
         FileUtils.printToFile(_hdfs_file) { _file_handler =>
           _file_handler println header
           _file_handler flush()
