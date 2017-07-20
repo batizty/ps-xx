@@ -12,6 +12,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.spark.ml.param.ParamMap
 import org.apache.spark.ml.util.Identifiable
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Dataset
 
@@ -258,16 +259,11 @@ class LogisticRegression(val uid: String)
     * @return y predication value
     */
   private def sigmoid(weight: mutable.Map[Long, Double], x: mutable.Map[Long, Double]): Double = {
-    val margin: Double = x.filterNot(_._2 == 0.0f)
-      .map { case (index, value) =>
-        weight.getOrElse(index, 0.0) * value
-      }.sum + intercept
-//    if (margin <= -23) {
-//      _min
-//    } else if (margin >= 20) {
-//      _max
-//    } else
-      1.0 / (1.0 + math.exp(-margin))
+    val margin = x.filterNot(_._2 == 0.0)
+      .map { case (i, xi) => weight.getOrElse(i, 0.0) * xi }
+      .sum + intercept
+
+    1.0 / (1.0 + math.exp( -1 * margin))
   }
 
   /** _min sigmoid function min threshold **/
@@ -339,8 +335,8 @@ class LogisticRegression(val uid: String)
     log.info("")
     log.info(" >> PS Parameters << ")
     log.info(" ParameterServerCount : " + getParameterServerCount)
-    log.info(" ParameterMaster    :" + getMaster)
-    log.info(" BatchSize          : " + getBatchSize)
+    log.info(" ParameterMaster      : " + getMaster)
+    log.info(" BatchSize            : " + getBatchSize)
     log.info("")
   }
 
@@ -630,8 +626,7 @@ class LogisticRegression(val uid: String)
           case ((j, xj)) if xj != 0.0 =>
             vectorW += j -> (vectorW.getOrElse(j, 0.0) - err * xj)
         }
-        val _cost = if (y1 == y0) getTol
-          else y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
+        val _cost = y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
         logInfo(s" cost = ${_cost} y0 = $y0 y1 = $y1")
 
         (_cost, vectorX.size.toLong)
@@ -651,7 +646,8 @@ class LogisticRegression(val uid: String)
     // Without L1 Reg and L2 Reg
     (vectorW.keySet union vectorWOld.keySet) foreach {
       key =>
-        grad += key -> (vectorW.getOrElse(key, 0.0) - vectorWOld.getOrElse(key, 0.0)) / batchSize.toDouble
+        grad += key ->
+          (vectorW.getOrElse(key, 0.0) - vectorWOld.getOrElse(key, 0.0)) / (batchSize.toDouble  * 1000)
     }
 
     val gradL1 = if (getRegParam > 0.0) {
@@ -684,9 +680,12 @@ class LogisticRegression(val uid: String)
   def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double], Int) => mutable.Map[Long, Double] = {
     (weight, grad, iteration) =>
       if (getRegParam != 1.0) {
+
+        val norm = weight map { case (i, wi) => wi * wi } sum
+
         grad foreach {
           case (i, wi) if weight.contains(i) =>
-            val v = (1.0 - getRegParam) * getLearningRate(iteration) * weight(i)
+            val v = (1.0 - getRegParam) * getLearningRate(iteration) * norm
             grad += i -> v
         }
       }
