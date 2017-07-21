@@ -16,7 +16,7 @@ class LRTestSpec extends FlatSpec with Matchers {
 
   "A LR Test Running" should "Work fine" in {
     val output = "hdfs://10.77.100.41:9000/user/tuoyu/models/lr.asgd.model"
-    val input = "hdfs://10.77.100.41:9000/user/tuoyu/data/a4a"
+    val input = "hdfs://10.77.100.41:9000/user/tuoyu/data/a4a.t"
 
     val spark = SparkSession
       .builder
@@ -30,10 +30,10 @@ class LRTestSpec extends FlatSpec with Matchers {
       .map(LibSvmParser.parse)
 
     val lr = new LogisticRegression("tuoyu")
-      .setRegParam(1.0)
+      .setRegParam(0.5)
       .setMaxIteration(100)
       .setTol(1E-9)
-      .setNumberOfFeatures(123)
+      .setNumberOfFeatures(124)
       .setTrainDataSetSplitRatio(0.95)
       .setLearningRate(1)
       .setLearningRateDecay(0.5)

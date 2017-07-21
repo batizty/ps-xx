@@ -711,10 +711,10 @@ class LogisticRegression(val uid: String)
     */
   def L1Reg: mutable.Map[Long, Double] => mutable.Map[Long, Double] = {
     grad =>
-//      if (getRegParam != 0.0) {
-//        grad.map { case (i, gi: Double) => (i -> (gi * getRegParam)) }
-//          .filter { case (i, gi) => gi > getTol * 1E-5}
-//      } else grad
+      if (getRegParam != 0.0) {
+        grad.map { case (i, gi: Double) => (i -> (gi * getRegParam)) }
+          .filter { case (i, gi) => gi > getTol * 1E-5}
+      } else grad
       grad
   }
 
