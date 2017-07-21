@@ -30,8 +30,8 @@ class LRTestSpec extends FlatSpec with Matchers {
       .map(LibSvmParser.parse)
 
     val lr = new LogisticRegression("tuoyu")
-      .setRegParam(0.5)
-      .setMaxIteration(15)
+      .setRegParam(1.0)
+      .setMaxIteration(100)
       .setTol(1E-9)
       .setNumberOfFeatures(123)
       .setTrainDataSetSplitRatio(0.95)
@@ -41,8 +41,9 @@ class LRTestSpec extends FlatSpec with Matchers {
       .setMetricStep(1)
       .setParameterServer(2)
       .setParameterMaster("h107710042.cluster.ds.weibo.com")
-      .setBatchSize(10)
+      .setBatchSize(40)
       .setAsyncAlgorithm(true)
+      .setElasticNetParam(0.001)
 
     lr.trainRDD(data)
   }

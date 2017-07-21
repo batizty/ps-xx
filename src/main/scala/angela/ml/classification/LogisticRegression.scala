@@ -259,11 +259,11 @@ class LogisticRegression(val uid: String)
     * @return y predication value
     */
   private def sigmoid(weight: mutable.Map[Long, Double], x: mutable.Map[Long, Double]): Double = {
-    val margin = x.filterNot(_._2 == 0.0)
-      .map { case (i, xi) => weight.getOrElse(i, 0.0) * xi }
-      .sum + intercept
+    val margin = x.map { case (i, xi) =>
+        weight.getOrElse(i, 0.0) * xi
+    }.sum + intercept
 
-    1.0 / (1.0 + math.exp( -1 * margin))
+    1.0 / (1.0 + math.exp(-1 * margin))
   }
 
   /** _min sigmoid function min threshold **/
@@ -401,6 +401,7 @@ class LogisticRegression(val uid: String)
                              psHandler: PSClientHandler[Double]
                            ): LogisticRegressionModel = {
 
+    /**
     var iterationTime: Int = 0
     var lastLogLoss: Double = 0.0f
     var diffLogLoss: Double = 1.0f
@@ -427,16 +428,18 @@ class LogisticRegression(val uid: String)
           // TODO 可能需要多次拉取
           psHandler.PULL(keys) { w0 =>
             val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
-            val (cost: Double, features: Long, vectorW) = costFunc(data, vectorW0, iterationTime)
+            val (cost: Double, features: Long, grad) = costFunc(data, vectorW0, iterationTime)
 
             rddTotalCost = -cost
 
-            val grad = getGradient(vectorW0, vectorW, iterationTime, data.size)
-              .filter(_._2 > GRADIENT_MINIMUM_THRESHOLD)
+            logInfo(s" iteration = $iterationTime vectorW0 = $vectorW0")
+
+            val grad1 = getGradient(grad, vectorW0, iterationTime, data.size)
+              .filterNot(_._2 > GRADIENT_MINIMUM_THRESHOLD)
               .toArray
               .sortBy(_._1)
             // 可能需要多次推送
-            psHandler.PUSH(grad.map(_._1), grad.map(_._2)) { result =>
+            psHandler.PUSH(grad1.map(_._1), grad1.map(_._2)) { result =>
               // logInfo(s"PUSH Operation result = $result")
             }
           }
@@ -444,7 +447,7 @@ class LogisticRegression(val uid: String)
 
         Iterable((rddTotalSamples, rddTotalFeatures, rddTotalCost)).iterator
       } reduce { case (a, b) => (a._1 + b._1, a._2 + b._2, a._3 + b._3) }
-
+      **/
     ???
   }
 
@@ -496,16 +499,47 @@ class LogisticRegression(val uid: String)
 
               psHandler.PULL(keys) {
                 w0 =>
-                  val vectorW0: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
-                  val (cost: Double, features: Long, vectorW) = costFunc(data, vectorW0, iterationTime)
+                  val weight: mutable.Map[Long, Double] = mutable.Map(keys.zip(w0).toSeq: _*)
+                  /**
+                  val g: mutable.Map[Long, Double] = mutable.Map()
 
-                  rddTotalCost = -cost
+                  val cost: Double = data map { case (x, y) =>
+                    rddTotalFeatures += x.size
+                    val margin = x map { case (i, xi) => w.getOrElse(i, 0.0) * xi } sum
+                    val pre = 1.0 / (1.0 + Math.exp(-margin))
+
+                    if (pre == 0.0 || pre == 1.0) {
+                      logInfo(s" x = $x y = $y")
+                      throw new Exception(" ERROR pre = 0.0")
+                    }
+
+                    val err = (pre - y) * getLearningRate(iterationTime)
+                    x foreach { case (i, xi) if xi != 0.0 =>
+                        w += (i -> (w.getOrElse(i, 0.0) - err * xi))
+                        g += (i -> (g.getOrElse(i, 0.0) - err * xi))
+                    }
+                    val _cost = y * Math.log(pre) + (1 - y) * Math.log(1 - pre)
+                    logInfo(s" cost = ${_cost} y = $y pre = $pre")
+                    _cost
+                  } sum
+                      **/
+
+                  val (cost: Double, features: Long, grad0) = costFunc(data, weight)
+
+                  rddTotalCost += -cost
                   rddTotalSamples += data.size
                   rddTotalFeatures += features
 
-                  val grad = getGradient(vectorW0, vectorW, iterationTime, data.size)
+                  val grad = getGradient(grad0, weight, iterationTime)
                     .toArray
                     .sortBy(_._1)
+
+                  /**
+                  val grad = g.map { case(i, gi) => (i, gi / getBatchSize.toDouble ) }
+                    .toArray
+                    .sortBy(_._1)
+                    **/
+
                   psHandler.PUSH(grad.map(_._1), grad.map(_._2)) {
                     result =>
                       ()
@@ -610,45 +644,50 @@ class LogisticRegression(val uid: String)
     predicationAndLabel
   }
 
+  def _dot(w: mutable.Map[Long, Double], x: mutable.Map[Long, Double]): Double = {
+    x map { case (i, xi) if xi != 0.0 => w.getOrElse(i, 0.0) * xi } sum
+  }
+
+  /**
+    *
+    * @param data
+    * @param weight
+    * @return
+    */
   def costFunc(
-                trainData: mutable.Buffer[(mutable.HashMap[Long, Double], Int)],
-                vectorWeight: mutable.Map[Long, Double],
-                iterationTime: Int
+                data: mutable.Buffer[(mutable.HashMap[Long, Double], Int)],
+                weight: mutable.Map[Long, Double]
               ): (Double, Long, mutable.Map[Long, Double]) = {
-    val vectorW: mutable.Map[Long, Double] = vectorWeight
+    val grad: mutable.Map[Long, Double] = mutable.Map()
 
-    val (cost: Double, features: Long) = trainData map {
-      case (vectorX, y1) =>
-        val y0 = sigmoid(vectorW, vectorX)
-        val err = getLearningRate(iterationTime) * (y0 - y1)
+    val (cost: Double, features: Long) = data map {
+      case (x, y) =>
+        val margin = -1 * (x map { case (i, xi) => weight.getOrElse(i, 0.0) * xi } sum)
+        val pre = (1.0 / (1.0 + Math.exp(margin)))
+        val multiplier = -1 * (pre - y.toDouble)
 
-        vectorX foreach {
-          case ((j, xj)) if xj != 0.0 =>
-            vectorW += j -> (vectorW.getOrElse(j, 0.0) - err * xj)
+        val loss =
+          if (y > 0) Math.log1p(Math.exp(margin))
+          else Math.log1p(Math.exp(margin)) - margin
+        logDebug(s" margin = $margin predication = $pre y = $y loss = $loss multiplier = $multiplier")
+
+        x foreach { case (i, xi) =>
+          grad += (i -> (grad.getOrElse(i, 0.0) + multiplier))
         }
-        val _cost = y1 * Math.log(y0) + (1 - y1) * Math.log(1 - y0)
-        logInfo(s" cost = ${_cost} y0 = $y0 y1 = $y1")
 
-        (_cost, vectorX.size.toLong)
+        (loss, x.size.toLong)
     } reduce ((a, b) => (a._1 + b._1, a._2 + b._2))
 
-    (cost, features, vectorW)
+    val grad1 = grad map { case (i, gi) => (i, gi / data.size.toDouble)}
+
+    (cost, features, grad1)
   }
 
   def getGradient(
-                   vectorWOld: mutable.Map[Long, Double],
+                   grad: mutable.Map[Long, Double],
                    vectorW: mutable.Map[Long, Double],
-                   batchSize: Int,
                    iteration: Int
                  ): mutable.Map[Long, Double] = {
-    val grad: mutable.Map[Long, Double] = mutable.Map.empty
-
-    // Without L1 Reg and L2 Reg
-    (vectorW.keySet union vectorWOld.keySet) foreach {
-      key =>
-        grad += key ->
-          (vectorW.getOrElse(key, 0.0) - vectorWOld.getOrElse(key, 0.0)) / (batchSize.toDouble  * 1000)
-    }
 
     val gradL1 = if (getRegParam > 0.0) {
       // L1 Reg
@@ -657,10 +696,12 @@ class LogisticRegression(val uid: String)
 
     val gradL2 = if (getRegParam < 1.0) {
       // L2 Reg
-      L2Reg(vectorW, gradL1, iteration)
+      L2Reg(vectorW, gradL1)
     } else gradL1
 
-    gradL2
+    val alpha = getLearningRate(iteration)
+
+    gradL2 map { case (i, gi) => (i, gi * alpha) }
   }
 
   /**
@@ -669,7 +710,12 @@ class LogisticRegression(val uid: String)
     * @return grad after with L1 Penalty
     */
   def L1Reg: mutable.Map[Long, Double] => mutable.Map[Long, Double] = {
-    grad => grad
+    grad =>
+//      if (getRegParam != 0.0) {
+//        grad.map { case (i, gi: Double) => (i -> (gi * getRegParam)) }
+//          .filter { case (i, gi) => gi > getTol * 1E-5}
+//      } else grad
+      grad
   }
 
   /**
@@ -677,16 +723,12 @@ class LogisticRegression(val uid: String)
     *
     * @return grad after with L2 Penalty
     */
-  def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double], Int) => mutable.Map[Long, Double] = {
-    (weight, grad, iteration) =>
+  def L2Reg: (mutable.Map[Long, Double], mutable.Map[Long, Double]) => mutable.Map[Long, Double] = {
+    (weight, grad) =>
       if (getRegParam != 1.0) {
-
-        val norm = weight map { case (i, wi) => wi * wi } sum
-
-        grad foreach {
-          case (i, wi) if weight.contains(i) =>
-            val v = (1.0 - getRegParam) * getLearningRate(iteration) * norm
-            grad += i -> v
+        val factor = (1.0 - getRegParam) * getElasticNetParam * getElasticNetParam
+        grad foreach { case (i, gi) =>
+          grad += (i -> (gi + factor * weight.getOrElse(i, 0.0)))
         }
       }
       grad
