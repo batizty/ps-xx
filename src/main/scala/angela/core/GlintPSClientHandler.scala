@@ -19,7 +19,7 @@ import scala.language.postfixOps
 /**
   * Created by tuoyu on 04/07/2017.
   */
-class GlintPSClientHandler[V](
+class GlintPSClientHandler[V: breeze.math.Semiring : TypeTag](
                                master: String,
                                val psServerCount: Int,
                                val features: Long,
@@ -93,12 +93,12 @@ class GlintPSClientHandler[V](
   }
 
   def _pullSync(keys: Array[Long])(f: (Array[V]) => Unit): Unit = {
-    val _stime = DateTime.now
+    val s_time = DateTime.now
 
     val ready = Await.ready[Array[V]](vector.pull(keys), timeout)
     ready onComplete {
       case Success(w) =>
-        logDebug(s"Pull Data Sync ${keys.length} Used ${logUsedTime(_stime)} ms")
+        logDebug(s"Pull Data Sync ${keys.length} Used ${logUsedTime(s_time)} ms")
         f(w)
       case Failure(err) =>
         logError(s"Pull Failed")
@@ -196,7 +196,7 @@ object GlintPSClientHandler {
   val MinimumPsServerRatio: Double = 0.5f
   val AcceptablePsServerRatio: Double = 0.8f
 
-  def apply[V: TypeTag](master: String, psServerCount: Int, features: Long): GlintPSClientHandler[V] = {
+  def apply[V: breeze.math.Semiring : TypeTag](master: String, psServerCount: Int, features: Long): GlintPSClientHandler[V] = {
     new GlintPSClientHandler[V](master, psServerCount, features)
   }
 }
