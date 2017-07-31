@@ -86,29 +86,9 @@
 
   </dependencies>
 
+
   <build>
-    <sourceDirectory>src/main/scala</sourceDirectory>
-    <testSourceDirectory>src/test/scala</testSourceDirectory>
     <plugins>
-      <plugin>
-        <groupId>org.scala-tools</groupId>
-        <artifactId>maven-scala-plugin</artifactId>
-        <version>2.15.2</version>
-        <executions>
-          <execution>
-            <goals>
-              <goal>compile</goal>
-              <goal>testCompile</goal>
-            </goals>
-          </execution>
-        </executions>
-        <configuration>
-          <scalaVersion>${scala.compat.version}</scalaVersion>
-          <args>
-            <arg>-target:jvm-1.5</arg>
-          </args>
-        </configuration>
-      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -145,39 +125,88 @@
         </executions>
       </plugin>
       <plugin>
-        <groupId>org.scalastyle</groupId>
-        <artifactId>scalastyle-maven-plugin</artifactId>
-        <version>0.8.0</version>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>2.6</version>
         <configuration>
-          <verbose>false</verbose>
-          <failOnViolation>true</failOnViolation>
-          <includeTestSourceDirectory>true</includeTestSourceDirectory>
-          <failOnWarning>false</failOnWarning>
-          <sourceDirectory>${basedir}/src/main/scala</sourceDirectory>
-          <testSourceDirectory>${basedir}/src/test/scala</testSourceDirectory>
-          <configLocation>${basedir}/lib/scalastyle_config.xml</configLocation>
-          <outputFile>${project.basedir}/scalastyle-output.xml</outputFile>
-          <outputEncoding>UTF-8</outputEncoding>
+          <encoding>UTF-8</encoding>
+        </configuration>
+      </plugin>
+      <!-- the Maven compiler plugin will compile Java source files -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>2.4</version>
+        <configuration>
+          <attach>true</attach>
         </configuration>
         <executions>
           <execution>
+            <id>attach-sources</id>
+            <phase>verify</phase>
             <goals>
-              <goal>check</goal>
+              <goal>jar-no-fork</goal>
             </goals>
           </execution>
         </executions>
       </plugin>
-    </plugins>
-  </build>
-  <reporting>
-    <plugins>
       <plugin>
-        <groupId>org.scala-tools</groupId>
-        <artifactId>maven-scala-plugin</artifactId>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.5.1</version>
         <configuration>
-          <scalaVersion>${scala.compat.version}</scalaVersion>
+          <source>${java.version}</source>
+          <target>${java.version}</target>
+          <encoding>UTF-8</encoding>
+          <maxmem>1024m</maxmem>
+          <fork>true</fork>
+          <compilerArgs>
+            <arg>-Xlint:all,-serial,-path</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+      <!-- the Maven Scala plugin will compile Scala source files -->
+      <plugin>
+        <groupId>net.alchim31.maven</groupId>
+        <artifactId>scala-maven-plugin</artifactId>
+        <version>3.2.2</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>compile</goal>
+              <goal>testCompile</goal>
+              <goal>add-source</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>attach-scaladocs</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>doc-jar</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <scalaVersion>${scala.version}</scalaVersion>
+          <args>
+            <arg>-unchecked</arg>
+            <arg>-deprecation</arg>
+            <arg>-feature</arg>
+            <arg>-language:postfixOps</arg>
+          </args>
+          <jvmArgs>
+            <jvmArg>-Xms1024m</jvmArg>
+            <jvmArg>-Xmx1024m</jvmArg>
+          </jvmArgs>
+          <javacArgs>
+            <javacArg>-source</javacArg>
+            <javacArg>${java.version}</javacArg>
+            <javacArg>-target</javacArg>
+            <javacArg>${java.version}</javacArg>
+            <javacArg>-Xlint:all,-serial,-path</javacArg>
+          </javacArgs>
         </configuration>
       </plugin>
     </plugins>
-  </reporting>
+  </build>
 </project>
