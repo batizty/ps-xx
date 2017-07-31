@@ -24,8 +24,6 @@ class GlintPSClientHandler[V](
   val maxRetry = 3
   val retrySleepMillis = 1000
 
-  // TODO Later override def INIT(): Unit = {}
-
   def _pullAsync(keys: Array[Long])(f: (Array[V]) => Unit): Unit = {
     val _stime = DateTime.now
 
