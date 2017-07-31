@@ -117,7 +117,7 @@ class GlintPSClientHandler[V](
   override def SAVE(path: String, conf: Configuration)(f: Boolean => Unit): Unit = {
     val _stime = DateTime.now
 
-    vector.save(path, Some(conf)) onComplete {
+    vector.save(path) onComplete {
       case Success(ret: Boolean) if ret == true =>
         logDebug(s" Save Date Into HDFS ${path} Used ${logUsedTime(_stime)} ms")
         f(ret)
